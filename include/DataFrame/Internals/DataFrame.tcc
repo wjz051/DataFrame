@@ -1,74 +1,18 @@
 // Hossein Moein
 // September 12, 2017
-/*
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-  notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-  names of its contributors may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// Copyright (C) 2018-2019 Hossein Moein
+// Distributed under the BSD Software License (see file License)
 
 #include <DataFrame/DataFrame.h>
-#include <DataFrame/GroupbyAggregators.h>
 
 #include <algorithm>
-#include <cmath>
-#include <functional>
-#include <future>
+#include <limits>
 #include <random>
 
 // ----------------------------------------------------------------------------
 
 namespace hmdf
 {
-
-template<typename I, typename H>
-DataFrame<I, H>::~DataFrame()  {
-
-    const SpinGuard guard(lock_);
-
-    data_.clear();
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename CF, typename ... Ts>
-void DataFrame<I, H>::sort_common_(DataFrame<I, H> &df, CF &&comp_func)  {
-
-    const size_type         idx_s = df.indices_.size();
-    std::vector<size_type>  sorting_idxs(idx_s, 0);
-
-    std::iota(sorting_idxs.begin(), sorting_idxs.end(), 0);
-    std::sort(sorting_idxs.begin(), sorting_idxs.end(), comp_func);
-
-    sort_functor_<Ts ...>   functor (sorting_idxs, idx_s);
-
-    for (auto &iter : df.data_)
-        iter.change(functor);
-    _sort_by_sorted_index_(df.indices_, sorting_idxs, idx_s);
-}
-
-// ----------------------------------------------------------------------------
 
 template<typename I, typename H>
 template<size_t N, typename ... Ts>
@@ -105,8 +49,30 @@ DataFrame<I, H>::shuffle(const std::array<const char *, N> col_names,
 
 template<typename I, typename H>
 template<typename T>
+inline constexpr T DataFrame<I, H>::_get_nan()  {
+
+    if (std::numeric_limits<T>::has_quiet_NaN)
+        return (std::numeric_limits<T>::quiet_NaN());
+    return (T());
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename H>
+template<typename T>
+inline constexpr bool DataFrame<I, H>::_is_nan(const T &val)  {
+
+    if (std::numeric_limits<T>::has_quiet_NaN)
+        return (is_nan__(val));
+    return (_get_nan<T>() == val);
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename H>
+template<typename T>
 void DataFrame<I, H>::
-fill_missing_value_(ColumnVecType<T> &vec,
+fill_missing_value_(std::vector<T> &vec,
                     const T &value,
                     int limit,
                     size_type col_num)  {
@@ -122,7 +88,7 @@ fill_missing_value_(ColumnVecType<T> &vec,
             vec.push_back(value);
             count += 1;
         }
-        else if (is_nan<T>(vec[i]))  {
+        else if (_is_nan<T>(vec[i]))  {
             vec[i] = value;
             count += 1;
         }
@@ -135,7 +101,7 @@ fill_missing_value_(ColumnVecType<T> &vec,
 template<typename I, typename H>
 template<typename T>
 void DataFrame<I, H>::
-fill_missing_ffill_(ColumnVecType<T> &vec, int limit, size_type col_num)  {
+fill_missing_ffill_(std::vector<T> &vec, int limit, size_type col_num)  {
 
     const size_type vec_size = vec.size();
 
@@ -144,10 +110,10 @@ fill_missing_ffill_(ColumnVecType<T> &vec, int limit, size_type col_num)  {
     int count = 0;
     T   last_value = vec[0];
 
-    for (size_type i = 1; i < col_num; ++i)  {
+    for (size_type i = 0; i < col_num; ++i)  {
         if (limit >= 0 && count >= limit)  break;
         if (i >= vec_size)  {
-            if (! is_nan(last_value))  {
+            if (! _is_nan(last_value))  {
                 vec.reserve(col_num);
                 vec.push_back(last_value);
                 count += 1;
@@ -155,9 +121,8 @@ fill_missing_ffill_(ColumnVecType<T> &vec, int limit, size_type col_num)  {
             else  break;
         }
         else  {
-            if (! is_nan<T>(vec[i]))
-                last_value = vec[i];
-            else if (! is_nan<T>(last_value))  {
+            if (! _is_nan<T>(vec[i]))  last_value = vec[i];
+            if (_is_nan<T>(vec[i]) && ! _is_nan<T>(last_value))  {
                 vec[i] = last_value;
                 count += 1;
             }
@@ -169,57 +134,9 @@ fill_missing_ffill_(ColumnVecType<T> &vec, int limit, size_type col_num)  {
 // ----------------------------------------------------------------------------
 
 template<typename I, typename H>
-template<typename T,
-         typename std::enable_if<! std::is_arithmetic<T>::value ||
-                                 ! std::is_arithmetic<I>::value>::type*>
-void DataFrame<I, H>::
-fill_missing_midpoint_(ColumnVecType<T> &vec, int limit, size_type col_num)  {
-
-    throw NotFeasible("fill_missing_midpoint_(): ERROR: Mid-point filling is "
-                      "not feasible on non-arithmetic types");
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename T,
-         typename std::enable_if<std::is_arithmetic<T>::value &&
-                                 std::is_arithmetic<I>::value>::type*>
-void DataFrame<I, H>::
-fill_missing_midpoint_(ColumnVecType<T> &vec, int limit, size_type col_num)  {
-
-    const size_type vec_size = vec.size();
-
-    if (vec_size < 3)  return;
-
-    int count = 0;
-    T   last_value = vec[0];
-
-    for (size_type i = 1; i < vec_size - 1; ++i)  {
-        if (limit >= 0 && count >= limit)  break;
-
-        if (! is_nan<T>(vec[i]))
-            last_value = vec[i];
-        else if (! is_nan<T>(last_value))  {
-            for (size_type j = i + 1; j < vec_size; ++j)  {
-                if (! is_nan<T>(vec[j]))  {
-                    vec[i] = (last_value + vec[j]) / T(2);
-                    last_value = vec[i];
-                    count += 1;
-                    break;
-                }
-            }
-        }
-    }
-    return;
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
 template<typename T>
 void DataFrame<I, H>::
-fill_missing_bfill_(ColumnVecType<T> &vec, int limit)  {
+fill_missing_bfill_(std::vector<T> &vec, int limit)  {
 
     const long  vec_size = static_cast<long>(vec.size());
 
@@ -230,8 +147,8 @@ fill_missing_bfill_(ColumnVecType<T> &vec, int limit)  {
 
     for (long i = vec_size - 1; i >= 0; --i)  {
         if (limit >= 0 && count >= limit)  break;
-        if (! is_nan<T>(vec[i]))  last_value = vec[i];
-        if (is_nan<T>(vec[i]) && ! is_nan<T>(last_value))  {
+        if (! _is_nan<T>(vec[i]))  last_value = vec[i];
+        if (_is_nan<T>(vec[i]) && ! _is_nan<T>(last_value))  {
             vec[i] = last_value;
             count += 1;
         }
@@ -246,7 +163,7 @@ template<typename T,
          typename std::enable_if<! std::is_arithmetic<T>::value ||
                                  ! std::is_arithmetic<I>::value>::type*>
 void DataFrame<I, H>::
-fill_missing_linter_(ColumnVecType<T> &, const IndexVecType &, int)  {
+fill_missing_linter_(std::vector<T> &, const IndexVecType &, int)  {
 
     throw NotFeasible("fill_missing_linter_(): ERROR: Interpolation is "
                       "not feasible on non-arithmetic types");
@@ -259,7 +176,7 @@ template<typename T,
          typename std::enable_if<std::is_arithmetic<T>::value &&
                                  std::is_arithmetic<I>::value>::type*>
 void DataFrame<I, H>::
-fill_missing_linter_(ColumnVecType<T> &vec,
+fill_missing_linter_(std::vector<T> &vec,
                      const IndexVecType &index,
                      int limit)  {
 
@@ -276,12 +193,12 @@ fill_missing_linter_(ColumnVecType<T> &vec,
 
     for (long i = 1; i < vec_size - 1; ++i)  {
         if (limit >= 0 && count >= limit)  break;
-        if (is_nan<T>(vec[i]))  {
-            if (is_nan<T>(*y2))  {
+        if (_is_nan<T>(vec[i]))  {
+            if (_is_nan<T>(*y2))  {
                 bool    found = false;
 
                 for (long j = i + 1; j < vec_size; ++j)  {
-                    if (! is_nan(vec[j]))  {
+                    if (! _is_nan(vec[j]))  {
                         y2 = &(vec[j]);
                         x2 = &(index[j]);
                         found = true;
@@ -290,9 +207,9 @@ fill_missing_linter_(ColumnVecType<T> &vec,
                 }
                 if (! found)  break;
             }
-            if (is_nan<T>(*y1))  {
+            if (_is_nan<T>(*y1))  {
                 for (long j = i - 1; j >= 0; --j)  {
-                    if (! is_nan(vec[j]))  {
+                    if (! _is_nan(vec[j]))  {
                         y1 = &(vec[j]);
                         x1 = &(index[j]);
                         break;
@@ -305,13 +222,11 @@ fill_missing_linter_(ColumnVecType<T> &vec,
                 (*y2 - *y1);
             count += 1;
         }
-        if (i < (vec_size - 2))  {
-            y1 = &(vec[i]);
-            y2 = &(vec[i + 2]);
-            x = &(index[i + 1]);
-            x1 = &(index[i]);
-            x2 = &(index[i + 2]);
-        }
+        y1 = &(vec[i]);
+        y2 = &(vec[i + 2]);
+        x = &(index[i + 1]);
+        x1 = &(index[i]);
+        x2 = &(index[i + 2]);
     }
 
     return;
@@ -331,7 +246,20 @@ fill_missing(const std::array<const char *, N> col_names,
     size_type                       thread_count = 0;
 
     for (size_type i = 0; i < N; ++i)  {
-        ColumnVecType<T>    &vec = get_column<T>(col_names[i]);
+        const auto  citer = column_tb_.find (col_names[i]);
+
+        if (citer == column_tb_.end())  {
+            char buffer [512];
+
+            sprintf(
+                buffer,
+                "DataFrame::fill_missing(): ERROR: Cannot find column '%s'",
+                col_names[i]);
+            throw ColNotFound(buffer);
+        }
+
+        DataVec         &hv = data_[citer->second];
+        std::vector<T>  &vec = hv.template get_vector<T>();
 
         if (fp == fill_policy::value)  {
             if (thread_count >= get_thread_level())
@@ -349,7 +277,7 @@ fill_missing(const std::array<const char *, N> col_names,
         }
         else if (fp == fill_policy::fill_forward)  {
             if (thread_count >= get_thread_level())
-                fill_missing_ffill_<T>(vec, limit, indices_.size());
+                fill_missing_ffill_(vec, limit, indices_.size());
             else  {
                 futures[thread_count] =
                     std::async(std::launch::async,
@@ -362,7 +290,7 @@ fill_missing(const std::array<const char *, N> col_names,
         }
         else if (fp == fill_policy::fill_backward)  {
             if (thread_count >= get_thread_level())
-                fill_missing_bfill_<T>(vec, limit);
+                fill_missing_bfill_(vec, limit);
             else  {
                 futures[thread_count] =
                     std::async(std::launch::async,
@@ -374,7 +302,7 @@ fill_missing(const std::array<const char *, N> col_names,
         }
         else if (fp == fill_policy::linear_interpolate)  {
             if (thread_count >= get_thread_level())
-                fill_missing_linter_<T>(vec, indices_, limit);
+                fill_missing_linter_(vec, indices_, limit);
             else  {
                 futures[thread_count] =
                     std::async(std::launch::async,
@@ -382,19 +310,6 @@ fill_missing(const std::array<const char *, N> col_names,
                                std::ref(vec),
                                std::cref(indices_),
                                limit);
-                thread_count += 1;
-            }
-        }
-        else if (fp == fill_policy::mid_point)  {
-            if (thread_count >= get_thread_level())
-                fill_missing_midpoint_<T>(vec, limit, indices_.size());
-            else  {
-                futures[thread_count] =
-                    std::async(std::launch::async,
-                               &DataFrame::fill_missing_midpoint_<T>,
-                               std::ref(vec),
-                               limit,
-                               indices_.size());
                 thread_count += 1;
             }
         }
@@ -430,19 +345,19 @@ drop_missing_rows_(T &vec,
     for (auto &iter : missing_row_map)  {
         if (policy == drop_policy::all)  {
             if (iter.second == col_num)  {
-                vec.erase(vec.begin() + (iter.first - erase_count));
+                vec.erase(vec.begin() + iter.first - erase_count);
                 erase_count += 1;
             }
         }
         else if (policy == drop_policy::any)  {
             if (iter.second > 0)  {
-                vec.erase(vec.begin() + (iter.first - erase_count));
+                vec.erase(vec.begin() + iter.first - erase_count);
                 erase_count += 1;
             }
         }
         else if (policy == drop_policy::threshold)  {
             if (iter.second > threshold)  {
-                vec.erase(vec.begin() + (iter.first - erase_count));
+                vec.erase(vec.begin() + iter.first - erase_count);
                 erase_count += 1;
             }
         }
@@ -525,6 +440,29 @@ drop_missing(drop_policy policy, size_type threshold)  {
 
 // ----------------------------------------------------------------------------
 
+template<typename V, typename T, size_t N>
+inline static void
+_replace_vector_vals_(V &data_vec,
+                      const std::array<T, N> &old_values,
+                      const std::array<T, N> &new_values,
+                      size_t &count,
+                      int limit)  {
+
+    const size_t    vec_s = data_vec.size();
+
+    for (size_t i = 0; i < N; ++i)  {
+        for (size_t j = 0; j < vec_s; ++j)  {
+            if (limit >= 0 && count >= static_cast<size_t>(limit))  return;
+            if (old_values[i] == data_vec[j])  {
+                data_vec[j] = new_values[i];
+                count += 1;
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+
 template<typename I, typename H>
 template<typename T, size_t N>
 typename DataFrame<I, H>::size_type DataFrame<I, H>::
@@ -533,10 +471,22 @@ replace(const char *col_name,
         const std::array<T, N> new_values,
         int limit)  {
 
-    ColumnVecType<T>    &vec = get_column<T>(col_name);
-    size_type           count = 0;
+    size_type   count = 0;
+    const auto  citer = column_tb_.find (col_name);
 
-    _replace_vector_vals_<ColumnVecType<T>, T, N>
+    if (citer == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf(buffer,
+                "DataFrame::replace(): ERROR: Cannot find column '%s'",
+                col_name);
+        throw ColNotFound(buffer);
+    }
+
+    DataVec         &hv = data_[citer->second];
+    std::vector<T>  &vec = hv.template get_vector<T>();
+
+    _replace_vector_vals_<std::vector<T>, T, N>
         (vec, old_values, new_values, count, limit);
 
     return (count);
@@ -566,8 +516,20 @@ template<typename T, typename F>
 void DataFrame<I, H>::
 replace(const char *col_name, F &functor)  {
 
-    ColumnVecType<T>    &vec = get_column<T>(col_name);
-    const size_type     vec_s = vec.size();
+    const auto  citer = column_tb_.find (col_name);
+
+    if (citer == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf(buffer,
+                "DataFrame::replace(): ERROR: Cannot find column '%s'",
+                col_name);
+        throw ColNotFound(buffer);
+    }
+
+    DataVec         &hv = data_[citer->second];
+    std::vector<T>  &vec = hv.template get_vector<T>();
+    const size_type vec_s = vec.size();
 
     for (size_type i = 0; i < vec_s; ++i)
         if (! functor(indices_[i], vec[i]))  break;
@@ -642,345 +604,42 @@ void DataFrame<I, H>::shrink_to_fit ()  {
 
 template<typename I, typename H>
 template<typename T, typename ...Ts>
-void DataFrame<I, H>::sort(const char *name, sort_spec dir)  {
+void DataFrame<I, H>::sort(const char *by_name)  {
 
     make_consistent<Ts ...>();
 
-    if (! ::strcmp(name, DF_INDEX_COL_NAME))  {
-        auto    a = [this](size_type i, size_type j) -> bool  {
-                        return (this->indices_[i] < this->indices_[j]);
-                    };
-        auto    d = [this](size_type i, size_type j) -> bool  {
-                        return (this->indices_[i] > this->indices_[j]);
-                    };
+    if (by_name == nullptr)  {
+        sort_functor_<IndexType, Ts ...>    functor (indices_);
 
+        for (auto &iter : data_)
+            iter.change(functor);
 
-        if (dir == sort_spec::ascen)
-            sort_common_<decltype(a), Ts ...>(*this, std::move(a));
-        else
-            sort_common_<decltype(d), Ts ...>(*this, std::move(d));
+        std::sort (indices_.begin(), indices_.end());
     }
     else  {
-        const ColumnVecType<T>  &idx_vec = get_column<T>(name);
+        const auto  iter = column_tb_.find (by_name);
 
-        auto    a = [&x = idx_vec](size_type i, size_type j) -> bool {
-                        return (x[i] < x[j]);
-                    };
-        auto    d = [&x = idx_vec](size_type i, size_type j) -> bool {
-                        return (x[i] > x[j]);
-                    };
+        if (iter == column_tb_.end())  {
+            char buffer [512];
 
-        if (dir == sort_spec::ascen)
-            sort_common_<decltype(a), Ts ...>(*this, std::move(a));
-        else
-            sort_common_<decltype(d), Ts ...>(*this, std::move(d));
+            sprintf (buffer, "DataFrame::sort(): ERROR: "
+                             "Cannot find column '%s'",
+                     by_name);
+            throw ColNotFound (buffer);
+        }
+
+        DataVec                     &hv = data_[iter->second];
+        std::vector<T>              &idx_vec = hv.template get_vector<T>();
+        sort_functor_<T, Ts ...>    functor (idx_vec);
+
+        for (size_type i = 0; i < data_.size(); ++i)
+            if (i != iter->second)
+                data_[i].change(functor);
+        functor(indices_);
+
+        std::sort (idx_vec.begin(), idx_vec.end());
     }
 
-    return;
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename T1, typename T2, typename ... Ts>
-void DataFrame<I, H>::
-sort(const char *name1, sort_spec dir1, const char *name2, sort_spec dir2)  {
-
-    make_consistent<Ts ...>();
-
-    ColumnVecType<T1>   *vec1 { nullptr};
-    ColumnVecType<T2>   *vec2 { nullptr};
-
-    if (! ::strcmp(name1, DF_INDEX_COL_NAME))
-        vec1 = reinterpret_cast<ColumnVecType<T1> *>(&indices_);
-    else
-        vec1 = &(get_column<T1>(name1));
-
-    if (! ::strcmp(name2, DF_INDEX_COL_NAME))
-        vec2 = reinterpret_cast<ColumnVecType<T2> *>(&indices_);
-    else
-        vec2 = &(get_column<T2>(name2));
-
-    auto    cf =
-        [vec1, vec2, dir1, dir2](size_type i, size_type j) -> bool {
-            if (dir1 == sort_spec::ascen)  {
-                if (vec1->at(i) < vec1->at(j))
-                    return (true);
-                else if (vec1->at(i) > vec1->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec1->at(i) > vec1->at(j))
-                    return (true);
-                else if (vec1->at(i) < vec1->at(j))
-                    return (false);
-            }
-            if (dir2 == sort_spec::ascen)
-                return (vec2->at(i) < vec2->at(j));
-            else
-                return (vec2->at(i) > vec2->at(j));
-        };
-
-    sort_common_<decltype(cf), Ts ...>(*this, std::move(cf));
-    return;
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename T1, typename T2, typename T3, typename ... Ts>
-void DataFrame<I, H>::
-sort(const char *name1, sort_spec dir1,
-     const char *name2, sort_spec dir2,
-     const char *name3, sort_spec dir3)  {
-
-    make_consistent<Ts ...>();
-
-    ColumnVecType<T1>   *vec1 { nullptr};
-    ColumnVecType<T2>   *vec2 { nullptr};
-    ColumnVecType<T3>   *vec3 { nullptr};
-
-    if (! ::strcmp(name1, DF_INDEX_COL_NAME))
-        vec1 = reinterpret_cast<ColumnVecType<T1> *>(&indices_);
-    else
-        vec1 = &(get_column<T1>(name1));
-
-    if (! ::strcmp(name2, DF_INDEX_COL_NAME))
-        vec2 = reinterpret_cast<ColumnVecType<T2> *>(&indices_);
-    else
-        vec2 = &(get_column<T2>(name2));
-
-    if (! ::strcmp(name3, DF_INDEX_COL_NAME))
-        vec3 = reinterpret_cast<ColumnVecType<T3> *>(&indices_);
-    else
-        vec3 = &(get_column<T3>(name3));
-
-    auto    cf =
-        [vec1, vec2, vec3, dir1, dir2, dir3]
-        (size_type i, size_type j) -> bool {
-            if (dir1 == sort_spec::ascen)  {
-                if (vec1->at(i) < vec1->at(j))
-                    return (true);
-                else if (vec1->at(i) > vec1->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec1->at(i) > vec1->at(j))
-                    return (true);
-                else if (vec1->at(i) < vec1->at(j))
-                    return (false);
-            }
-            if (dir2 == sort_spec::ascen)  {
-                if (vec2->at(i) < vec2->at(j))
-                    return (true);
-                else if (vec2->at(i) > vec2->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec2->at(i) > vec2->at(j))
-                    return (true);
-                else if (vec2->at(i) < vec2->at(j))
-                    return (false);
-            }
-            if (dir3 == sort_spec::ascen)
-                return (vec3->at(i) < vec3->at(j));
-            else
-                return (vec3->at(i) > vec3->at(j));
-        };
-
-    sort_common_<decltype(cf), Ts ...>(*this, std::move(cf));
-    return;
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename T1, typename T2, typename T3, typename T4, typename ... Ts>
-void DataFrame<I, H>::
-sort(const char *name1, sort_spec dir1,
-     const char *name2, sort_spec dir2,
-     const char *name3, sort_spec dir3,
-     const char *name4, sort_spec dir4)  {
-
-    make_consistent<Ts ...>();
-
-    ColumnVecType<T1>   *vec1 { nullptr};
-    ColumnVecType<T2>   *vec2 { nullptr};
-    ColumnVecType<T3>   *vec3 { nullptr};
-    ColumnVecType<T4>   *vec4 { nullptr};
-
-    if (! ::strcmp(name1, DF_INDEX_COL_NAME))
-        vec1 = reinterpret_cast<ColumnVecType<T1> *>(&indices_);
-    else
-        vec1 = &(get_column<T1>(name1));
-
-    if (! ::strcmp(name2, DF_INDEX_COL_NAME))
-        vec2 = reinterpret_cast<ColumnVecType<T2> *>(&indices_);
-    else
-        vec2 = &(get_column<T2>(name2));
-
-    if (! ::strcmp(name3, DF_INDEX_COL_NAME))
-        vec3 = reinterpret_cast<ColumnVecType<T3> *>(&indices_);
-    else
-        vec3 = &(get_column<T3>(name3));
-
-    if (! ::strcmp(name4, DF_INDEX_COL_NAME))
-        vec4 = reinterpret_cast<ColumnVecType<T4> *>(&indices_);
-    else
-        vec4 = &(get_column<T4>(name4));
-
-    auto    cf =
-        [vec1, vec2, vec3, vec4, dir1, dir2, dir3, dir4]
-        (size_type i, size_type j) -> bool {
-            if (dir1 == sort_spec::ascen)  {
-                if (vec1->at(i) < vec1->at(j))
-                    return (true);
-                else if (vec1->at(i) > vec1->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec1->at(i) > vec1->at(j))
-                    return (true);
-                else if (vec1->at(i) < vec1->at(j))
-                    return (false);
-            }
-            if (dir2 == sort_spec::ascen)  {
-                if (vec2->at(i) < vec2->at(j))
-                    return (true);
-                else if (vec2->at(i) > vec2->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec2->at(i) > vec2->at(j))
-                    return (true);
-                else if (vec2->at(i) < vec2->at(j))
-                    return (false);
-            }
-            if (dir3 == sort_spec::ascen)  {
-                if (vec3->at(i) < vec3->at(j))
-                    return (true);
-                else if (vec3->at(i) > vec3->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec3->at(i) > vec3->at(j))
-                    return (true);
-                else if (vec3->at(i) < vec3->at(j))
-                    return (false);
-            }
-            if (dir4 == sort_spec::ascen)
-                return (vec4->at(i) < vec4->at(j));
-            else
-                return (vec4->at(i) > vec4->at(j));
-        };
-
-    sort_common_<decltype(cf), Ts ...>(*this, std::move(cf));
-    return;
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename T1, typename T2, typename T3, typename T4, typename T5,
-         typename ... Ts>
-void DataFrame<I, H>::
-sort(const char *name1, sort_spec dir1,
-     const char *name2, sort_spec dir2,
-     const char *name3, sort_spec dir3,
-     const char *name4, sort_spec dir4,
-     const char *name5, sort_spec dir5)  {
-
-    make_consistent<Ts ...>();
-
-    ColumnVecType<T1>   *vec1 { nullptr};
-    ColumnVecType<T2>   *vec2 { nullptr};
-    ColumnVecType<T3>   *vec3 { nullptr};
-    ColumnVecType<T4>   *vec4 { nullptr};
-    ColumnVecType<T5>   *vec5 { nullptr};
-
-    if (! ::strcmp(name1, DF_INDEX_COL_NAME))
-        vec1 = reinterpret_cast<ColumnVecType<T1> *>(&indices_);
-    else
-        vec1 = &(get_column<T1>(name1));
-
-    if (! ::strcmp(name2, DF_INDEX_COL_NAME))
-        vec2 = reinterpret_cast<ColumnVecType<T2> *>(&indices_);
-    else
-        vec2 = &(get_column<T2>(name2));
-
-    if (! ::strcmp(name3, DF_INDEX_COL_NAME))
-        vec3 = reinterpret_cast<ColumnVecType<T3> *>(&indices_);
-    else
-        vec3 = &(get_column<T3>(name3));
-
-    if (! ::strcmp(name4, DF_INDEX_COL_NAME))
-        vec4 = reinterpret_cast<ColumnVecType<T4> *>(&indices_);
-    else
-        vec4 = &(get_column<T4>(name4));
-
-    if (! ::strcmp(name4, DF_INDEX_COL_NAME))
-        vec5 = reinterpret_cast<ColumnVecType<T5> *>(&indices_);
-    else
-        vec5 = &(get_column<T5>(name5));
-
-    auto    cf =
-        [vec1, vec2, vec3, vec4, vec5, dir1, dir2, dir3, dir4, dir5]
-        (size_type i, size_type j) -> bool {
-            if (dir1 == sort_spec::ascen)  {
-                if (vec1->at(i) < vec1->at(j))
-                    return (true);
-                else if (vec1->at(i) > vec1->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec1->at(i) > vec1->at(j))
-                    return (true);
-                else if (vec1->at(i) < vec1->at(j))
-                    return (false);
-            }
-            if (dir2 == sort_spec::ascen)  {
-                if (vec2->at(i) < vec2->at(j))
-                    return (true);
-                else if (vec2->at(i) > vec2->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec2->at(i) > vec2->at(j))
-                    return (true);
-                else if (vec2->at(i) < vec2->at(j))
-                    return (false);
-            }
-            if (dir3 == sort_spec::ascen)  {
-                if (vec3->at(i) < vec3->at(j))
-                    return (true);
-                else if (vec3->at(i) > vec3->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec3->at(i) > vec3->at(j))
-                    return (true);
-                else if (vec3->at(i) < vec3->at(j))
-                    return (false);
-            }
-            if (dir4 == sort_spec::ascen)  {
-                if (vec4->at(i) < vec4->at(j))
-                    return (true);
-                else if (vec4->at(i) > vec4->at(j))
-                    return (false);
-            }
-            else  {
-                if (vec4->at(i) > vec4->at(j))
-                    return (true);
-                else if (vec4->at(i) < vec4->at(j))
-                    return (false);
-            }
-            if (dir5 == sort_spec::ascen)
-                return (vec5->at(i) < vec5->at(j));
-            else
-                return (vec5->at(i) > vec5->at(j));
-        };
-
-    sort_common_<decltype(cf), Ts ...>(*this, std::move(cf));
     return;
 }
 
@@ -988,317 +647,106 @@ sort(const char *name1, sort_spec dir1,
 
 template<typename I, typename H>
 template<typename T, typename ...Ts>
-std::future<void>
-DataFrame<I, H>::sort_async(const char *name, sort_spec dir)  {
+std::future<void> DataFrame<I, H>::sort_async(const char *by_name)  {
 
     return (std::async(std::launch::async,
-                       [name, dir, this] () -> void {
-                           this->sort<T, Ts ...>(name, dir);
-                       }));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename T1, typename T2, typename ... Ts>
-std::future<void>
-DataFrame<I, H>::
-sort_async(const char *name1, sort_spec dir1,
-           const char *name2, sort_spec dir2)  {
-
-    return (std::async(std::launch::async,
-                       [name1, dir1, name2, dir2, this] () -> void {
-                           this->sort<T1, T2, Ts ...>(name1, dir1,
-                                                      name2, dir2);
-                       }));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename T1, typename T2, typename T3, typename ... Ts>
-std::future<void>
-DataFrame<I, H>::
-sort_async(const char *name1, sort_spec dir1,
-           const char *name2, sort_spec dir2,
-           const char *name3, sort_spec dir3)  {
-
-    return (std::async(std::launch::async,
-                       [name1, dir1, name2, dir2, name3, dir3,
-                        this] () -> void {
-                           this->sort<T1, T2, T3, Ts ...>(name1, dir1,
-                                                          name2, dir2,
-                                                          name3, dir3);
-                       }));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename T1, typename T2, typename T3, typename T4, typename ... Ts>
-std::future<void>
-DataFrame<I, H>::
-sort_async(const char *name1, sort_spec dir1,
-           const char *name2, sort_spec dir2,
-           const char *name3, sort_spec dir3,
-           const char *name4, sort_spec dir4)  {
-
-    return (std::async(std::launch::async,
-                       [name1, dir1, name2, dir2, name3, dir3, name4, dir4,
-                        this] () -> void {
-                           this->sort<T1, T2, T3, T4, Ts ...>(name1, dir1,
-                                                              name2, dir2,
-                                                              name3, dir3,
-                                                              name4, dir4);
-                       }));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename T1, typename T2, typename T3, typename T4, typename T5,
-         typename ... Ts>
-std::future<void>
-DataFrame<I, H>::
-sort_async(const char *name1, sort_spec dir1,
-           const char *name2, sort_spec dir2,
-           const char *name3, sort_spec dir3,
-           const char *name4, sort_spec dir4,
-           const char *name5, sort_spec dir5)  {
-
-    return (std::async(std::launch::async,
-                       [name1, dir1, name2, dir2, name3, dir3, name4, dir4,
-                        name5, dir5, this] () -> void {
-                           this->sort<T1, T2, T3, T4, T5, Ts ...>(name1, dir1,
-                                                                  name2, dir2,
-                                                                  name3, dir3,
-                                                                  name4, dir4,
-                                                                  name5, dir5);
-                       }));
+                       &DataFrame::sort<T, Ts ...>,
+                       this, by_name));
 }
 
 // ----------------------------------------------------------------------------
 
 template<typename I, typename H>
 template<typename F, typename T, typename ...Ts>
-DataFrame<I, H> DataFrame<I, H>::
-groupby (F &&func, const char *gb_col_name, sort_state already_sorted) const  {
+DataFrame<I, H>
+DataFrame<I, H>:: groupby (F &&func,
+                           const char *gb_col_name,
+                           sort_state already_sorted) const  {
 
     DataFrame   tmp_df = *this;
 
-    if (already_sorted == sort_state::not_sorted)
-        tmp_df.sort<T, Ts ...>(gb_col_name, sort_spec::ascen);
+    if (already_sorted == sort_state::not_sorted)  {
+        if (gb_col_name == nullptr) { tmp_df.sort<T, Ts ...>(); }
+        else { tmp_df.sort<T, Ts ...>(gb_col_name); }
+    }
 
-    DataFrame   result;
+    DataFrame   df;
 
-    for (const auto &iter : tmp_df.column_list_)  {
-        add_col_functor_<Ts ...>    functor (iter.first.c_str(), result);
+    for (const auto &iter : tmp_df.column_tb_)  {
+        add_col_functor_<Ts ...>    functor (iter.first.c_str(), df);
 
         tmp_df.data_[iter.second].change(functor);
     }
 
-    size_type   marker = 0;
+    const size_type vec_size = tmp_df.indices_.size();
+    size_type       marker = 0;
 
-    if (! ::strcmp(gb_col_name, DF_INDEX_COL_NAME))  { // Index
-        const size_type vec_size = tmp_df.indices_.size();
-
+    if (gb_col_name == nullptr)  { // Index
         for (size_type i = 0; i < vec_size; ++i)  {
             if (tmp_df.indices_[i] != tmp_df.indices_[marker])  {
-                result.append_index(tmp_df.indices_[marker]);
-                for (const auto &iter : tmp_df.column_list_)  {
-                    groupby_functor_<F, Ts...>  functor(iter.first.c_str(),
-                                                        marker,
-                                                        i,
-                                                        tmp_df.indices_,
-                                                        func,
-                                                        result);
+                df.append_index(tmp_df.indices_[marker]);
+                for (const auto &iter : tmp_df.column_tb_)  {
+                    groupby_functor_<F, Ts...>  functor(
+                                                    iter.first.c_str(),
+                                                    marker,
+                                                    i,
+                                                    tmp_df.indices_[marker],
+                                                    func,
+                                                    df);
 
                     tmp_df.data_[iter.second].change(functor);
+                    func.reset();
                 }
 
                 marker = i;
             }
         }
         if (marker < vec_size)  {
-            result.append_index(tmp_df.indices_[vec_size - 1]);
-            for (const auto &iter : tmp_df.column_list_)  {
-                groupby_functor_<F, Ts...>  functor(iter.first.c_str(),
-                                                    marker,
-                                                    vec_size,
-                                                    tmp_df.indices_,
-                                                    func,
-                                                    result);
+            df.append_index(tmp_df.indices_[vec_size - 1]);
+            for (const auto &iter : tmp_df.column_tb_)  {
+                groupby_functor_<F, Ts...>  functor(
+                                                iter.first.c_str(),
+                                                vec_size - 1,
+                                                vec_size,
+                                                tmp_df.indices_[vec_size - 1],
+                                                func,
+                                                df);
 
                 tmp_df.data_[iter.second].change(functor);
             }
         }
     }
     else  { // Non-index column
-        const ColumnVecType<T>  &gb_vec = tmp_df.get_column<T>(gb_col_name);
-        const size_type         vec_size = gb_vec.size();
+        const std::vector<T>    &gb_vec = tmp_df.get_column<T>(gb_col_name);
 
         for (size_type i = 0; i < vec_size; ++i)  {
             if (gb_vec[i] != gb_vec[marker])  {
-                groupby_functor_<F, IndexType>  ts_functor(DF_INDEX_COL_NAME,
-                                                           marker,
-                                                           i,
-                                                           tmp_df.indices_,
-                                                           func,
-                                                           result);
+                groupby_functor_<F, IndexType>  ts_functor(
+                                            "INDEX",
+                                            marker,
+                                            i,
+                                            tmp_df.indices_[marker],
+                                            func,
+                                            df);
 
                 ts_functor(tmp_df.indices_);
-                result.append_column<T>(gb_col_name,
-                                        gb_vec [marker],
-                                        nan_policy::dont_pad_with_nans);
-
-                for (const auto &iter : tmp_df.column_list_)  {
-                    if (iter.first != gb_col_name)  {
-                        groupby_functor_<F, Ts...>  functor(iter.first.c_str(),
-                                                            marker,
-                                                            i,
-                                                            tmp_df.indices_,
-                                                            func,
-                                                            result);
-
-                        tmp_df.data_[iter.second].change(functor);
-                    }
-                }
-
-                marker = i;
-            }
-        }
-
-        if (marker < vec_size)  {
-            groupby_functor_<F, IndexType>  ts_functor(DF_INDEX_COL_NAME,
-                                                       marker,
-                                                       vec_size,
-                                                       tmp_df.indices_,
-                                                       func,
-                                                       result);
-
-            ts_functor(tmp_df.indices_);
-            result.append_column<T>(gb_col_name,
-                                    gb_vec [vec_size - 1],
+                df.append_column<T>(gb_col_name,
+                                    gb_vec [marker],
                                     nan_policy::dont_pad_with_nans);
+                func.reset();
 
-            for (const auto &iter : tmp_df.column_list_)  {
-                if (iter.first != gb_col_name)  {
-                    groupby_functor_<F, Ts...>  functor(iter.first.c_str(),
-                                                        marker,
-                                                        vec_size,
-                                                        tmp_df.indices_,
-                                                        func,
-                                                        result);
-
-                    tmp_df.data_[iter.second].change(functor);
-                }
-            }
-        }
-    }
-
-    return (result);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename F, typename T1, typename T2, typename ...Ts>
-DataFrame<I, H> DataFrame<I, H>::
-groupby (F &&func,
-         const char *gb_col_name1,
-         const char *gb_col_name2,
-         sort_state already_sorted) const  {
-
-    DataFrame   tmp_df = *this;
-
-    if (already_sorted == sort_state::not_sorted)
-        tmp_df.sort<T1, T2, Ts ...>(gb_col_name1, sort_spec::ascen,
-                                    gb_col_name2, sort_spec::ascen);
-
-    DataFrame   result;
-
-    for (const auto &iter : tmp_df.column_list_)  {
-        add_col_functor_<Ts ...>    functor (iter.first.c_str(), result);
-
-        tmp_df.data_[iter.second].change(functor);
-    }
-
-    const bool  index_col_involved =
-        ! ::strcmp(gb_col_name2, DF_INDEX_COL_NAME);
-
-    const ColumnVecType<T1> *gb_vec1 { nullptr};
-    const ColumnVecType<T2> *gb_vec2 { nullptr};
-
-    if (! ::strcmp(gb_col_name1, DF_INDEX_COL_NAME))
-        gb_vec1 = reinterpret_cast<const ColumnVecType<T1> *>(&tmp_df.indices_);
-    else
-        gb_vec1 = &(tmp_df.get_column<T1>(gb_col_name1));
-
-    if (! ::strcmp(gb_col_name2, DF_INDEX_COL_NAME))
-        gb_vec2 = reinterpret_cast<const ColumnVecType<T2> *>(&tmp_df.indices_);
-    else
-        gb_vec2 = &(tmp_df.get_column<T2>(gb_col_name2));
-
-    size_type       marker = 0;
-    const size_type vec_size = std::min(gb_vec1->size(), gb_vec2->size());
-
-    if (index_col_involved)  { // Index is involved
-        for (size_type i = 0; i < vec_size; ++i)  {
-            if (tmp_df.indices_[i] != tmp_df.indices_[marker])  {
-                result.append_index(tmp_df.indices_[marker]);
-                for (const auto &iter : tmp_df.column_list_)  {
-                    groupby_functor_<F, Ts...>  functor(iter.first.c_str(),
+                for (const auto &iter : tmp_df.column_tb_)  {
+                    if (iter.first != gb_col_name)  {
+                        groupby_functor_<F, Ts...>  functor(
+                                                        iter.first.c_str(),
                                                         marker,
                                                         i,
-                                                        tmp_df.indices_,
+                                                        tmp_df.indices_[marker],
                                                         func,
-                                                        result);
-
-                    tmp_df.data_[iter.second].change(functor);
-                }
-
-                marker = i;
-            }
-        }
-        if (marker < vec_size)  {
-            result.append_index(tmp_df.indices_[vec_size - 1]);
-            for (const auto &iter : tmp_df.column_list_)  {
-                groupby_functor_<F, Ts...>  functor(iter.first.c_str(),
-                                                    marker,
-                                                    vec_size,
-                                                    tmp_df.indices_,
-                                                    func,
-                                                    result);
-
-                tmp_df.data_[iter.second].change(functor);
-            }
-        }
-    }
-    else  { // Index is not involved
-        for (size_type i = 0; i < vec_size; ++i)  {
-            if (gb_vec2->at(i) != gb_vec2->at(marker))  {
-                groupby_functor_<F, IndexType>  ts_functor(DF_INDEX_COL_NAME,
-                                                           marker,
-                                                           i,
-                                                           tmp_df.indices_,
-                                                           func,
-                                                           result);
-
-                ts_functor(tmp_df.indices_);
-                result.append_column<T2>(gb_col_name2,
-                                         gb_vec2->at(marker),
-                                         nan_policy::dont_pad_with_nans);
-
-                for (const auto &iter : tmp_df.column_list_)  {
-                    if (iter.first != gb_col_name2)  {
-                        groupby_functor_<F, Ts...>  functor(iter.first.c_str(),
-                                                            marker,
-                                                            i,
-                                                            tmp_df.indices_,
-                                                            func,
-                                                            result);
+                                                        df);
 
                         tmp_df.data_[iter.second].change(functor);
+                        func.reset();
                     }
                 }
 
@@ -1307,26 +755,29 @@ groupby (F &&func,
         }
 
         if (marker < vec_size)  {
-            groupby_functor_<F, IndexType>  ts_functor(DF_INDEX_COL_NAME,
-                                                       marker,
-                                                       vec_size,
-                                                       tmp_df.indices_,
-                                                       func,
-                                                       result);
+            groupby_functor_<F, IndexType>  ts_functor(
+                                        "INDEX",
+                                        vec_size - 1,
+                                        vec_size,
+                                        tmp_df.indices_[vec_size - 1],
+                                        func,
+                                        df);
 
             ts_functor(tmp_df.indices_);
-            result.append_column<T2>(gb_col_name2,
-                                     gb_vec2->at(vec_size - 1),
-                                     nan_policy::dont_pad_with_nans);
+            df.append_column<T>(gb_col_name,
+                                gb_vec [vec_size - 1],
+                                nan_policy::dont_pad_with_nans);
+            func.reset();
 
-            for (const auto &iter : tmp_df.column_list_)  {
-                if (iter.first != gb_col_name2)  {
-                    groupby_functor_<F, Ts...>  functor(iter.first.c_str(),
-                                                        marker,
-                                                        vec_size,
-                                                        tmp_df.indices_,
-                                                        func,
-                                                        result);
+            for (const auto &iter : tmp_df.column_tb_)  {
+                if (iter.first != gb_col_name)  {
+                    groupby_functor_<F, Ts...>  functor(
+                                            iter.first.c_str(),
+                                            vec_size - 1,
+                                            vec_size,
+                                            tmp_df.indices_[vec_size - 1],
+                                            func,
+                                            df);
 
                     tmp_df.data_[iter.second].change(functor);
                 }
@@ -1334,7 +785,7 @@ groupby (F &&func,
         }
     }
 
-    return (result);
+    return (df);
 }
 
 // ----------------------------------------------------------------------------
@@ -1346,36 +797,12 @@ DataFrame<I, H>::groupby_async (F &&func,
                                 const char *gb_col_name,
                                 sort_state already_sorted) const  {
 
-    return (std::async(
-                std::launch::async,
-                [func = std::forward<F>(func), gb_col_name,
-                 already_sorted, this] () mutable -> DataFrame  {
-                    return (this->groupby<F, T, Ts ...>(std::move(func),
-                                                        gb_col_name,
-                                                        already_sorted));
-                }));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename H>
-template<typename F, typename T1, typename T2, typename ...Ts>
-std::future<DataFrame<I, H>>
-DataFrame<I, H>::groupby_async (F &&func,
-                                const char *gb_col_name1,
-                                const char *gb_col_name2,
-                                sort_state already_sorted) const  {
-
-    return (std::async(
-                std::launch::async,
-                [func = std::forward<decltype(func)>(func),
-                 gb_col_name1, gb_col_name2,
-                 already_sorted, this] () mutable -> DataFrame  {
-                    return (this->groupby<F, T1, T2, Ts ...>(std::move(func),
-                                                             gb_col_name1,
-                                                             gb_col_name2,
-                                                             already_sorted));
-                }));
+    return (std::async(std::launch::async,
+                       &DataFrame::groupby<F, T, Ts ...>,
+                           this,
+                           std::move(func),
+                           gb_col_name,
+                           already_sorted));
 }
 
 // ----------------------------------------------------------------------------
@@ -1385,7 +812,19 @@ template<typename T>
 StdDataFrame<T>
 DataFrame<I, H>::value_counts (const char *col_name) const  {
 
-    const ColumnVecType<T>  &vec = get_column<T>(col_name);
+    auto iter = column_tb_.find (col_name);
+
+    if (iter == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::value_counts(): ERROR: Cannot find column '%s'",
+                 col_name);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv = data_[iter->second];
+    const std::vector<T>    &vec = hv.template get_vector<T>();
     auto                    hash_func =
         [](std::reference_wrapper<const T> v) -> std::size_t  {
             return(std::hash<T>{}(v.get()));
@@ -1405,7 +844,7 @@ DataFrame<I, H>::value_counts (const char *col_name) const  {
 
     // take care of nans
     for (auto citer : vec)  {
-        if (is_nan<T>(citer))  {
+        if (_is_nan<T>(citer))  {
             ++nan_count;
             continue;
         }
@@ -1427,7 +866,7 @@ DataFrame<I, H>::value_counts (const char *col_name) const  {
         counts.emplace_back(citer.second);
     }
     if (nan_count > 0)  {
-        res_indices.push_back(get_nan<T>());
+        res_indices.push_back(_get_nan<T>());
         counts.emplace_back(nan_count);
     }
 
@@ -1447,25 +886,26 @@ DataFrame<I, H>
 DataFrame<I, H>::
 bucketize (F &&func, const IndexType &bucket_interval) const  {
 
-    DataFrame   result;
+    DataFrame   df;
 
-    for (const auto &iter : column_list_)  {
-        add_col_functor_<Ts ...>    functor (iter.first.c_str(), result);
-
-        data_[iter.second].change(functor);
-    }
-
-    for (const auto &iter : column_list_)  {
-        bucket_functor_<F, Ts...>   functor(iter.first.c_str(),
-                                            indices_,
-                                            bucket_interval,
-                                            func,
-                                            result);
+    for (const auto &iter : column_tb_)  {
+        add_col_functor_<Ts ...>    functor (iter.first.c_str(), df);
 
         data_[iter.second].change(functor);
     }
 
-    return (result);
+    for (const auto &iter : column_tb_)  {
+        bucket_functor_<F, Ts...>   functor(
+                                        iter.first.c_str(),
+                                        indices_,
+                                        bucket_interval,
+                                        func,
+                                        df);
+
+        data_[iter.second].change(functor);
+    }
+
+    return (df);
 }
 
 // ----------------------------------------------------------------------------
@@ -1488,10 +928,16 @@ bucketize_async (F &&func, const IndexType &bucket_interval) const  {
 template<typename I, typename H>
 template<typename T, typename V>
 DataFrame<I, H> DataFrame<I, H>::
-transpose(IndexVecType &&indices, const V &new_col_names) const  {
+transpose(IndexVecType &&indices,
+          const V &current_col_order,
+          const V &new_col_names) const  {
 
-    const size_type num_cols = column_list_.size();
+    const size_type num_cols = column_tb_.size();
 
+    if (current_col_order.size() != num_cols)
+        throw InconsistentData ("DataFrame::transpose(): ERROR: "
+                                "Length of current_col_order is not equal "
+                                "to number of columns");
     if (new_col_names.size() != indices_.size())
         throw InconsistentData ("DataFrame::transpose(): ERROR: "
                                 "Length of new_col_names is not equal "
@@ -1500,11 +946,23 @@ transpose(IndexVecType &&indices, const V &new_col_names) const  {
     std::vector<const std::vector<T> *> current_cols;
 
     current_cols.reserve(num_cols);
-    for (const auto citer : column_list_)
-        current_cols.push_back(&(get_column<T>(citer.first.c_str())));
+    for (const auto citer : current_col_order)  {
+        const auto  &data_citer = column_tb_.find(citer);
+
+        if (data_citer == column_tb_.end())
+            throw InconsistentData ("DataFrame::transpose(): ERROR: "
+                                    "Cannot find at least one of the column "
+                                    "names in the order vector");
+
+        const DataVec   &hv = data_[data_citer->second];
+
+        current_cols.push_back(&(hv.template get_vector<T>()));
+    }
+
 
     std::vector<std::vector<T>> trans_cols(indices_.size());
     DataFrame                   df;
+    size_type                   idx = 0;
 
     for (size_type i = 0; i < indices_.size(); ++i)  {
         trans_cols[i].reserve(num_cols);
@@ -1512,7 +970,7 @@ transpose(IndexVecType &&indices, const V &new_col_names) const  {
             if (current_cols[j]->size() > i)
                 trans_cols[i].push_back((*(current_cols[j]))[i]);
             else
-                trans_cols[i].push_back(get_nan<T>());
+                trans_cols[i].push_back(_get_nan<T>());
         }
     }
 

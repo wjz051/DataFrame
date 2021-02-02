@@ -1,37 +1,10 @@
 // Hossein Moein
 // September 12, 2017
-/*
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-  notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-  names of its contributors may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// Copyright (C) 2018-2019 Hossein Moein
+// Distributed under the BSD Software License (see file License)
 
 #include <DataFrame/DataFrame.h>
-#include <DataFrame/DataFrameStatsVisitors.h>
 
-#include <cmath>
-#include <functional>
 #include <random>
 #include <unordered_set>
 
@@ -40,40 +13,33 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace hmdf
 {
 
+#if defined(WIN32) || defined(_WIN32)
+#  ifdef min
+#    undef min
+#  endif // min
+#  ifdef max
+#    undef max
+#  endif // max
+#endif // WIN32 || _WIN32
+
+// ----------------------------------------------------------------------------
+
 template<typename I, typename  H>
 std::pair<typename DataFrame<I, H>::size_type,
           typename DataFrame<I, H>::size_type>
-DataFrame<I, H>::shape() const  {
+DataFrame<I, H>::shape()  {
 
-    return (std::make_pair(indices_.size(), column_list_.size()));
+    return (std::make_pair(indices_.size(), column_tb_.size()));
 }
 
 // ----------------------------------------------------------------------------
 
 template<typename I, typename  H>
 template<typename T>
-MemUsage DataFrame<I, H>::get_memory_usage(const char *col_name) const  {
-
-    MemUsage    result;
-
-    result.index_type_size = sizeof(IndexType);
-    result.column_type_size = sizeof(T);
-    _get_mem_numbers_(get_index(),
-                      result.index_used_memory, result.index_capacity_memory);
-    _get_mem_numbers_(get_column<T>(col_name),
-                      result.column_used_memory,
-                      result.column_capacity_memory);
-    return (result);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T>
-typename DataFrame<I, H>::template ColumnVecType<T> &
+typename type_declare<H, T>::type &
 DataFrame<I, H>::get_column (const char *name)  {
 
-    auto    iter = column_tb_.find (name);
+    auto iter = column_tb_.find (name);
 
     if (iter == column_tb_.end())  {
         char buffer [512];
@@ -84,8 +50,7 @@ DataFrame<I, H>::get_column (const char *name)  {
         throw ColNotFound (buffer);
     }
 
-    DataVec         &hv = data_[iter->second];
-    const SpinGuard guard(lock_);
+    DataVec &hv = data_[iter->second];
 
     return (hv.template get_vector<T>());
 }
@@ -93,19 +58,8 @@ DataFrame<I, H>::get_column (const char *name)  {
 // ----------------------------------------------------------------------------
 
 template<typename I, typename  H>
-bool
-DataFrame<I, H>::has_column (const char *name) const  {
-
-    auto    iter = column_tb_.find (name);
-
-    return (iter != column_tb_.end());
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
 template<typename T>
-const typename DataFrame<I, H>::template ColumnVecType<T> &
+const typename type_declare<H, T>::type &
 DataFrame<I, H>::get_column (const char *name) const  {
 
     return (const_cast<DataFrame *>(this)->get_column<T>(name));
@@ -118,6 +72,8 @@ template<size_t N, typename ... Ts>
 HeteroVector DataFrame<I, H>::
 get_row(size_type row_num, const std::array<const char *, N> col_names) const {
 
+    HeteroVector ret_vec;
+
     if (row_num >= indices_.size())  {
         char buffer [512];
 
@@ -129,8 +85,6 @@ get_row(size_type row_num, const std::array<const char *, N> col_names) const {
                 row_num);
         throw BadRange(buffer);
     }
-
-    HeteroVector ret_vec;
 
     ret_vec.reserve<IndexType>(1);
     ret_vec.push_back(indices_[row_num]);
@@ -162,7 +116,20 @@ template<typename T>
 std::vector<T> DataFrame<I, H>::
 get_col_unique_values(const char *name) const  {
 
-    const ColumnVecType<T>  &vec = get_column<T>(name);
+    auto  iter = column_tb_.find (name);
+
+    if (iter == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_col_unique_values(): "
+                 "ERROR: Cannot find column '%s'",
+                 name);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv = data_[iter->second];
+    const std::vector<T>    &vec = hv.template get_vector<T>();
     auto                    hash_func =
         [](std::reference_wrapper<const T> v) -> std::size_t  {
             return(std::hash<T>{}(v.get()));
@@ -182,9 +149,9 @@ get_col_unique_values(const char *name) const  {
 
     result.reserve(vec.size());
     for (auto citer : vec)  {
-        if (is_nan<T>(citer) && ! counted_nan)  {
+        if (_is_nan<T>(citer) && ! counted_nan)  {
             counted_nan = true;
-            result.push_back(get_nan<T>());
+            result.push_back(_get_nan<T>());
             continue;
         }
 
@@ -195,6 +162,396 @@ get_col_unique_values(const char *name) const  {
     }
 
     return(result);
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename  H>
+template<typename ... Ts>
+void DataFrame<I, H>::multi_visit (Ts ... args)  {
+
+    auto    args_tuple = std::tuple<Ts ...>(args ...);
+    auto    fc = [this](auto &pa) mutable -> void {
+        auto &functor = *(pa.second);
+
+        using T =
+            typename std::remove_reference<decltype(functor)>::type::value_type;
+        using V =
+            typename std::remove_const<
+                typename std::remove_reference<decltype(functor)>::type>::type;
+
+        this->visit<T, V>(pa.first, functor);
+    };
+
+    for_each_in_tuple_ (args_tuple, fc);
+    return;
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename  H>
+template<typename T, typename V>
+V &DataFrame<I, H>::visit (const char *name, V &visitor)  {
+
+    const auto  iter = column_tb_.find (name);
+
+    if (iter == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(1): ERROR: Cannot find column '%s'",
+                 name);
+        throw ColNotFound (buffer);
+    }
+
+    DataVec         &hv = data_[iter->second];
+    std::vector<T>  &vec = hv.template get_vector<T>();
+    const size_type idx_s = indices_.size();
+    const size_type data_s = vec.size();
+
+    visitor.pre();
+    for (size_type i = 0; i < idx_s; ++i)
+        visitor (indices_[i], i < data_s ? vec[i] : _get_nan<T>());
+    visitor.post();
+
+    return (visitor);
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename  H>
+template<typename T1, typename T2, typename V>
+V &DataFrame<I, H>::
+visit (const char *name1, const char *name2, V &visitor)  {
+
+    const auto  iter1 = column_tb_.find (name1);
+    const auto  iter2 = column_tb_.find (name2);
+
+    if (iter1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(2): ERROR: Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+    if (iter2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(2): ERROR: Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+
+    DataVec         &hv1 = data_[iter1->second];
+    DataVec         &hv2 = data_[iter2->second];
+    std::vector<T1> &vec1 = hv1.template get_vector<T1>();
+    std::vector<T2> &vec2 = hv2.template get_vector<T2>();
+    const size_type idx_s = indices_.size();
+    const size_type data_s1 = vec1.size();
+    const size_type data_s2 = vec2.size();
+
+    visitor.pre();
+    for (size_type i = 0; i < idx_s; ++i)
+        visitor (indices_[i],
+                 i < data_s1 ? vec1[i] : _get_nan<T1>(),
+                 i < data_s2 ? vec2[i] : _get_nan<T2>());
+    visitor.post();
+
+    return (visitor);
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename  H>
+template<typename T1, typename T2, typename T3, typename V>
+V &DataFrame<I, H>::
+visit (const char *name1, const char *name2, const char *name3, V &visitor)  {
+
+    const auto  iter1 = column_tb_.find (name1);
+    const auto  iter2 = column_tb_.find (name2);
+    const auto  iter3 = column_tb_.find (name3);
+
+    if (iter1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(3): ERROR: Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+    if (iter2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(3): ERROR: Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+    if (iter3 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(3): ERROR: Cannot find column '%s'",
+                 name3);
+        throw ColNotFound (buffer);
+    }
+
+    DataVec         &hv1 = data_[iter1->second];
+    DataVec         &hv2 = data_[iter2->second];
+    DataVec         &hv3 = data_[iter3->second];
+    std::vector<T1> &vec1 = hv1.template get_vector<T1>();
+    std::vector<T2> &vec2 = hv2.template get_vector<T2>();
+    std::vector<T3> &vec3 = hv3.template get_vector<T3>();
+    const size_type idx_s = indices_.size();
+    const size_type data_s1 = vec1.size();
+    const size_type data_s2 = vec2.size();
+    const size_type data_s3 = vec3.size();
+
+    visitor.pre();
+    for (size_type i = 0; i < idx_s; ++i)
+        visitor (indices_[i],
+                 i < data_s1 ? vec1[i] : _get_nan<T1>(),
+                 i < data_s2 ? vec2[i] : _get_nan<T2>(),
+                 i < data_s3 ? vec3[i] : _get_nan<T3>());
+    visitor.post();
+
+    return (visitor);
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename  H>
+template<typename T1, typename T2, typename T3, typename T4, typename V>
+V &DataFrame<I, H>::
+visit (const char *name1,
+       const char *name2,
+       const char *name3,
+       const char *name4,
+       V &visitor)  {
+
+    const auto  iter1 = column_tb_.find (name1);
+    const auto  iter2 = column_tb_.find (name2);
+    const auto  iter3 = column_tb_.find (name3);
+    const auto  iter4 = column_tb_.find (name4);
+
+    if (iter1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(4): ERROR: Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+    if (iter2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(4): ERROR: Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+    if (iter3 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(4): ERROR: Cannot find column '%s'",
+                 name3);
+        throw ColNotFound (buffer);
+    }
+    if (iter4 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(4): ERROR: Cannot find column '%s'",
+                 name4);
+        throw ColNotFound (buffer);
+    }
+
+    DataVec         &hv1 = data_[iter1->second];
+    DataVec         &hv2 = data_[iter2->second];
+    DataVec         &hv3 = data_[iter3->second];
+    DataVec         &hv4 = data_[iter4->second];
+    std::vector<T1> &vec1 = hv1.template get_vector<T1>();
+    std::vector<T2> &vec2 = hv2.template get_vector<T2>();
+    std::vector<T3> &vec3 = hv3.template get_vector<T3>();
+    std::vector<T4> &vec4 = hv4.template get_vector<T4>();
+    const size_type idx_s = indices_.size();
+    const size_type data_s1 = vec1.size();
+    const size_type data_s2 = vec2.size();
+    const size_type data_s3 = vec3.size();
+    const size_type data_s4 = vec4.size();
+
+    visitor.pre();
+    for (size_type i = 0; i < idx_s; ++i)
+        visitor (indices_[i],
+                 i < data_s1 ? vec1[i] : _get_nan<T1>(),
+                 i < data_s2 ? vec2[i] : _get_nan<T2>(),
+                 i < data_s3 ? vec3[i] : _get_nan<T3>(),
+                 i < data_s4 ? vec4[i] : _get_nan<T4>());
+    visitor.post();
+
+    return (visitor);
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename  H>
+template<typename T1, typename T2, typename T3, typename T4, typename T5,
+         typename V>
+V &DataFrame<I, H>::
+visit (const char *name1,
+       const char *name2,
+       const char *name3,
+       const char *name4,
+       const char *name5,
+       V &visitor)  {
+
+    const auto  iter1 = column_tb_.find (name1);
+    const auto  iter2 = column_tb_.find (name2);
+    const auto  iter3 = column_tb_.find (name3);
+    const auto  iter4 = column_tb_.find (name4);
+    const auto  iter5 = column_tb_.find (name5);
+
+    if (iter1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(5): ERROR: Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+    if (iter2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(5): ERROR: Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+    if (iter3 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(5): ERROR: Cannot find column '%s'",
+                 name3);
+        throw ColNotFound (buffer);
+    }
+    if (iter4 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(5): ERROR: Cannot find column '%s'",
+                 name4);
+        throw ColNotFound (buffer);
+    }
+    if (iter5 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::visit(5): ERROR: Cannot find column '%s'",
+                 name5);
+        throw ColNotFound (buffer);
+    }
+
+    DataVec         &hv1 = data_[iter1->second];
+    DataVec         &hv2 = data_[iter2->second];
+    DataVec         &hv3 = data_[iter3->second];
+    DataVec         &hv4 = data_[iter4->second];
+    DataVec         &hv5 = data_[iter5->second];
+    std::vector<T1> &vec1 = hv1.template get_vector<T1>();
+    std::vector<T2> &vec2 = hv2.template get_vector<T2>();
+    std::vector<T3> &vec3 = hv3.template get_vector<T3>();
+    std::vector<T4> &vec4 = hv4.template get_vector<T4>();
+    std::vector<T5> &vec5 = hv5.template get_vector<T5>();
+    const size_type idx_s = indices_.size();
+    const size_type data_s1 = vec1.size();
+    const size_type data_s2 = vec2.size();
+    const size_type data_s3 = vec3.size();
+    const size_type data_s4 = vec4.size();
+    const size_type data_s5 = vec5.size();
+
+    visitor.pre();
+    for (size_type i = 0; i < idx_s; ++i)
+        visitor (indices_[i],
+                 i < data_s1 ? vec1[i] : _get_nan<T1>(),
+                 i < data_s2 ? vec2[i] : _get_nan<T2>(),
+                 i < data_s3 ? vec3[i] : _get_nan<T3>(),
+                 i < data_s4 ? vec4[i] : _get_nan<T4>(),
+                 i < data_s5 ? vec5[i] : _get_nan<T5>());
+    visitor.post();
+
+    return (visitor);
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename  H>
+template<typename T, typename V>
+V &DataFrame<I, H>::
+single_act_visit (const char *name, V &visitor) const  {
+
+    const auto  iter = column_tb_.find (name);
+
+    if (iter == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf(buffer,
+                "DataFrame::single_act_visit: ERROR: Cannot find column '%s'",
+                name);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv = data_[iter->second];
+    const std::vector<T>    &vec = hv.template get_vector<T>();
+
+    visitor.pre();
+    visitor (indices_, vec);
+    visitor.post();
+
+    return (visitor);
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename I, typename  H>
+template<typename T1, typename T2, typename V>
+V &DataFrame<I, H>::
+single_act_visit (const char *name1, const char *name2, V &visitor)  {
+
+    const auto  iter1 = column_tb_.find (name1);
+    const auto  iter2 = column_tb_.find (name2);
+
+    if (iter1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::single_act_visit(2): "
+                 "ERROR: Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+    if (iter2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::single_act_visit(2): "
+                 "ERROR: Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv1 = data_[iter1->second];
+    const DataVec           &hv2 = data_[iter2->second];
+    const std::vector<T1>   &vec1 = hv1.template get_vector<T1>();
+    const std::vector<T2>   &vec2 = hv2.template get_vector<T2>();
+
+    visitor.pre();
+    visitor (indices_, vec1, vec2);
+    visitor.post();
+
+    return (visitor);
 }
 
 // ----------------------------------------------------------------------------
@@ -219,11 +576,11 @@ DataFrame<I, H>::get_data_by_idx (Index2D<IndexType> range) const  {
                                                    ? upper
                                                    : indices_.end());
 
-        for (auto &iter : column_list_)  {
-            load_functor_<DataFrame, Ts ...>    functor (iter.first.c_str(),
-                                                         b_dist,
-                                                         e_dist,
-                                                         df);
+        for (auto &iter : column_tb_)  {
+            load_functor_<Ts ...>   functor (iter.first.c_str(),
+                                             b_dist,
+                                             e_dist,
+                                             df);
 
             data_[iter.second].change(functor);
         }
@@ -239,8 +596,7 @@ template<typename ... Ts>
 DataFrame<I, H>
 DataFrame<I, H>::get_data_by_idx(const std::vector<IndexType> &values) const  {
 
-    const std::unordered_set<IndexType> val_table(values.begin(),
-                                                  values.end());
+    const std::unordered_set<IndexType> val_table(values.begin(), values.end());
     IndexVecType                        new_index;
     std::vector<size_type>              locations;
     const size_type                     values_s = values.size();
@@ -257,7 +613,7 @@ DataFrame<I, H>::get_data_by_idx(const std::vector<IndexType> &values) const  {
     DataFrame   df;
 
     df.load_index(std::move(new_index));
-    for (auto col_citer : column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_functor_<size_type, Ts ...>    functor (
             col_citer.first.c_str(),
             locations,
@@ -271,45 +627,38 @@ DataFrame<I, H>::get_data_by_idx(const std::vector<IndexType> &values) const  {
 }
 
 // ----------------------------------------------------------------------------
-
+ 
 template<typename I, typename  H>
 template<typename ... Ts>
 DataFrameView<I>
-DataFrame<I, H>::get_view_by_idx (Index2D<IndexType> range) const  {
+DataFrame<I, H>::get_view_by_idx (Index2D<IndexType> range)  {
 
     static_assert(std::is_base_of<HeteroVector, H>::value,
                   "Only a StdDataFrame can call get_view_by_idx()");
 
-    auto                        *nc_this = const_cast<DataFrame<I, H> *>(this);
-    auto                        lower =
-        std::lower_bound (nc_this->indices_.begin(),
-                          nc_this->indices_.end(),
-                          range.begin);
-    auto                        upper =
-        std::upper_bound (nc_this->indices_.begin(),
-                          nc_this->indices_.end(),
-                          range.end);
+    const auto          &lower =
+        std::lower_bound (indices_.begin(), indices_.end(), range.begin);
+    const auto          &upper =
+        std::upper_bound (indices_.begin(), indices_.end(), range.end);
     DataFrameView<IndexType>    dfv;
 
     if (lower != indices_.end())  {
         dfv.indices_ =
             typename DataFrameView<IndexType>::IndexVecType(&*lower, &*upper);
 
-        const size_type b_dist = std::distance(nc_this->indices_.begin(),
-                                               lower);
-        const size_type e_dist = std::distance(nc_this->indices_.begin(),
-                                               upper < nc_this->indices_.end()
+        const size_type b_dist = std::distance(indices_.begin(), lower);
+        const size_type e_dist = std::distance(indices_.begin(),
+                                               upper < indices_.end()
                                                    ? upper
-                                                   : nc_this->indices_.end());
+                                                   : indices_.end());
 
-        for (auto &iter : nc_this->column_list_)  {
-            view_setup_functor_<DataFrameView<IndexType>, Ts ...>   functor (
-                iter.first.c_str(),
-                b_dist,
-                e_dist,
-                dfv);
+        for (auto &iter : column_tb_)  {
+            view_setup_functor_<Ts ...> functor (iter.first.c_str(),
+                                                 b_dist,
+                                                 e_dist,
+                                                 dfv);
 
-            nc_this->data_[iter.second].change(functor);
+            data_[iter.second].change(functor);
         }
     }
 
@@ -321,15 +670,14 @@ DataFrame<I, H>::get_view_by_idx (Index2D<IndexType> range) const  {
 template<typename I, typename  H>
 template<typename ... Ts>
 DataFramePtrView<I> DataFrame<I, H>::
-get_view_by_idx(const std::vector<IndexType> &values) const  {
+get_view_by_idx(const std::vector<IndexType> &values)  {
 
     static_assert(std::is_base_of<HeteroVector, H>::value,
                   "Only a StdDataFrame can call get_view_by_idx()");
 
     using TheView = DataFramePtrView<IndexType>;
 
-    const std::unordered_set<IndexType> val_table(values.begin(),
-                                                  values.end());
+    const std::unordered_set<IndexType> val_table(values.begin(), values.end());
     typename TheView::IndexVecType      new_index;
     std::vector<size_type>              locations;
     const size_type                     values_s = values.size();
@@ -337,12 +685,9 @@ get_view_by_idx(const std::vector<IndexType> &values) const  {
 
     new_index.reserve(values_s);
     locations.reserve(values_s);
-
-    auto    *nc_this = const_cast<DataFrame<I, H> *>(this);
-
     for (size_type i = 0; i < idx_s; ++i)
         if (val_table.find(indices_[i]) != val_table.end())  {
-            new_index.push_back(&(nc_this->indices_[i]));
+            new_index.push_back(&(indices_[i]));
             locations.push_back(i);
         }
 
@@ -350,14 +695,14 @@ get_view_by_idx(const std::vector<IndexType> &values) const  {
 
     dfv.indices_ = std::move(new_index);
 
-    for (auto col_citer : nc_this->column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_view_functor_<size_type, Ts ...>   functor (
             col_citer.first.c_str(),
             locations,
             idx_s,
             dfv);
 
-        nc_this->data_[col_citer.second].change(functor);
+        data_[col_citer.second].change(functor);
     }
 
     return (dfv);
@@ -382,8 +727,8 @@ DataFrame<I, H>::get_data_by_loc (Index2D<long> range) const  {
         df.load_index(indices_.begin() + static_cast<size_type>(range.begin),
                       indices_.begin() + static_cast<size_type>(range.end));
 
-        for (auto &iter : column_list_)  {
-            load_functor_<DataFrame, Ts ...>    functor (
+        for (auto &iter : column_tb_)  {
+            load_functor_<Ts ...>   functor (
                 iter.first.c_str(),
                 static_cast<size_type>(range.begin),
                 static_cast<size_type>(range.end),
@@ -418,13 +763,13 @@ DataFrame<I, H>::get_data_by_loc (const std::vector<long> &locations) const  {
     new_index.reserve(locations.size());
     for (const auto citer: locations)  {
         const size_type index =
-            citer >= 0 ? (citer) : (citer) + static_cast<long>(idx_s);
+            citer >= 0 ? citer : static_cast<long>(idx_s) + citer;
 
         new_index.push_back(indices_[index]);
     }
     df.load_index(std::move(new_index));
 
-    for (auto col_citer : column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_functor_<long, Ts ...>  functor (
             col_citer.first.c_str(),
             locations,
@@ -442,35 +787,32 @@ DataFrame<I, H>::get_data_by_loc (const std::vector<long> &locations) const  {
 template<typename I, typename  H>
 template<typename ... Ts>
 DataFrameView<I>
-DataFrame<I, H>::get_view_by_loc (Index2D<long> range) const  {
+DataFrame<I, H>::get_view_by_loc (Index2D<long> range)  {
 
     static_assert(std::is_base_of<HeteroVector, H>::value,
                   "Only a StdDataFrame can call get_view_by_loc()");
 
-    const long  idx_s = static_cast<long>(indices_.size());
-
     if (range.begin < 0)
-        range.begin = idx_s + range.begin;
+        range.begin = static_cast<long>(indices_.size()) + range.begin;
     if (range.end < 0)
-        range.end = idx_s + range.end;
+        range.end = static_cast<long>(indices_.size()) + range.end;
 
-    if (range.end <= idx_s && range.begin <= range.end && range.begin >= 0)  {
+    if (range.end <= static_cast<long>(indices_.size()) &&
+        range.begin <= range.end && range.begin >= 0)  {
         DataFrameView<IndexType>    dfv;
-        auto                        *nc_this =
-            const_cast<DataFrame<I, H> *>(this);
 
         dfv.indices_ =
             typename DataFrameView<IndexType>::IndexVecType(
-                &*(nc_this->indices_.begin() + range.begin),
-                &*(nc_this->indices_.begin() + range.end));
-        for (const auto &iter : nc_this->column_list_)  {
-            view_setup_functor_<DataFrameView<IndexType>, Ts ...>   functor (
+                &*(indices_.begin() + range.begin),
+                &*(indices_.begin() + range.end));
+        for (const auto &iter : column_tb_)  {
+            view_setup_functor_<Ts ...> functor (
                 iter.first.c_str(),
                 static_cast<size_type>(range.begin),
                 static_cast<size_type>(range.end),
                 dfv);
 
-            nc_this->data_[iter.second].change(functor);
+            data_[iter.second].change(functor);
         }
 
         return (dfv);
@@ -490,7 +832,7 @@ DataFrame<I, H>::get_view_by_loc (Index2D<long> range) const  {
 template<typename I, typename  H>
 template<typename ... Ts>
 DataFramePtrView<I>
-DataFrame<I, H>::get_view_by_loc (const std::vector<long> &locations) const  {
+DataFrame<I, H>::get_view_by_loc (const std::vector<long> &locations)  {
 
     static_assert(std::is_base_of<HeteroVector, H>::value,
                   "Only a StdDataFrame can call get_view_by_loc()");
@@ -502,25 +844,23 @@ DataFrame<I, H>::get_view_by_loc (const std::vector<long> &locations) const  {
 
     typename TheView::IndexVecType  new_index;
 
-    auto    *nc_this = const_cast<DataFrame<I, H> *>(this);
-
     new_index.reserve(locations.size());
     for (const auto citer: locations)  {
         const size_type index =
-            citer >= 0 ? (citer) : (citer) + static_cast<long>(idx_s);
+            citer >= 0 ? citer : static_cast<long>(idx_s) + citer;
 
-        new_index.push_back(&(nc_this->indices_[index]));
+        new_index.push_back(&(indices_[index]));
     }
     dfv.indices_ = std::move(new_index);
 
-    for (auto col_citer : nc_this->column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_view_functor_<long, Ts ...>    functor (
             col_citer.first.c_str(),
             locations,
             indices_.size(),
             dfv);
 
-        nc_this->data_[col_citer.second].change(functor);
+        data_[col_citer.second].change(functor);
     }
 
     return (dfv);
@@ -533,7 +873,20 @@ template<typename T, typename F, typename ... Ts>
 DataFrame<I, H> DataFrame<I, H>::
 get_data_by_sel (const char *name, F &sel_functor) const  {
 
-    const ColumnVecType<T>  &vec = get_column<T>(name);
+    const auto  citer = column_tb_.find (name);
+
+    if (citer == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(1): ERROR: "
+                 "Cannot find column '%s'",
+                 name);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv = data_[citer->second];
+    const std::vector<T>    &vec = hv.template get_vector<T>();
     const size_type         idx_s = indices_.size();
     const size_type         col_s = vec.size();
     std::vector<size_type>  col_indices;
@@ -551,7 +904,7 @@ get_data_by_sel (const char *name, F &sel_functor) const  {
         new_index.push_back(indices_[citer]);
     df.load_index(std::move(new_index));
 
-    for (auto col_citer : column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_functor_<size_type, Ts ...>    functor (
             col_citer.first.c_str(),
             col_indices,
@@ -569,12 +922,25 @@ get_data_by_sel (const char *name, F &sel_functor) const  {
 template<typename I, typename  H>
 template<typename T, typename F, typename ... Ts>
 DataFramePtrView<I> DataFrame<I, H>::
-get_view_by_sel (const char *name, F &sel_functor) const  {
+get_view_by_sel (const char *name, F &sel_functor)  {
 
     static_assert(std::is_base_of<HeteroVector, H>::value,
                   "Only a StdDataFrame can call get_view_by_sel()");
 
-    const ColumnVecType<T>  &vec = get_column<T>(name);
+    const auto  citer = column_tb_.find (name);
+
+    if (citer == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(1): ERROR: "
+                 "Cannot find column '%s'",
+                 name);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv = data_[citer->second];
+    const std::vector<T>    &vec = hv.template get_vector<T>();
     const size_type         idx_s = indices_.size();
     const size_type         col_s = vec.size();
     std::vector<size_type>  col_indices;
@@ -589,21 +955,19 @@ get_view_by_sel (const char *name, F &sel_functor) const  {
     TheView                         dfv;
     typename TheView::IndexVecType  new_index;
 
-    auto    *nc_this = const_cast<DataFrame<I, H> *>(this);
-
     new_index.reserve(col_indices.size());
     for (const auto citer: col_indices)
-        new_index.push_back(&(nc_this->indices_[citer]));
+        new_index.push_back(&(indices_[citer]));
     dfv.indices_ = std::move(new_index);
 
-    for (auto col_citer : nc_this->column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_view_functor_<size_type, Ts ...>   functor (
             col_citer.first.c_str(),
             col_indices,
             idx_s,
             dfv);
 
-        nc_this->data_[col_citer.second].change(functor);
+        data_[col_citer.second].change(functor);
     }
 
     return (dfv);
@@ -616,9 +980,33 @@ template<typename T1, typename T2, typename F, typename ... Ts>
 DataFrame<I, H> DataFrame<I, H>::
 get_data_by_sel (const char *name1, const char *name2, F &sel_functor) const  {
 
+    const auto  citer1 = column_tb_.find (name1);
+    const auto  citer2 = column_tb_.find (name2);
+
+    if (citer1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+    if (citer2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+
     const size_type         idx_s = indices_.size();
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
+    const DataVec           &hv1 = data_[citer1->second];
+    const DataVec           &hv2 = data_[citer2->second];
+    const std::vector<T1>   &vec1 = hv1.template get_vector<T1>();
+    const std::vector<T2>   &vec2 = hv2.template get_vector<T2>();
     const size_type         col_s1 = vec1.size();
     const size_type         col_s2 = vec2.size();
     const size_type         col_s = std::max(col_s1, col_s2);
@@ -627,8 +1015,8 @@ get_data_by_sel (const char *name1, const char *name2, F &sel_functor) const  {
     col_indices.reserve(idx_s / 2);
     for (size_type i = 0; i < col_s; ++i)
         if (sel_functor (indices_[i],
-                         i < col_s1 ? vec1[i] : get_nan<T1>(),
-                         i < col_s2 ? vec2[i] : get_nan<T2>()))
+                         i < col_s1 ? vec1[i] : _get_nan<T1>(),
+                         i < col_s2 ? vec2[i] : _get_nan<T2>()))
             col_indices.push_back(i);
 
     DataFrame       df;
@@ -639,7 +1027,7 @@ get_data_by_sel (const char *name1, const char *name2, F &sel_functor) const  {
         new_index.push_back(indices_[citer]);
     df.load_index(std::move(new_index));
 
-    for (auto col_citer : column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_functor_<size_type, Ts ...>    functor (
             col_citer.first.c_str(),
             col_indices,
@@ -657,13 +1045,37 @@ get_data_by_sel (const char *name1, const char *name2, F &sel_functor) const  {
 template<typename I, typename  H>
 template<typename T1, typename T2, typename F, typename ... Ts>
 DataFramePtrView<I> DataFrame<I, H>::
-get_view_by_sel (const char *name1, const char *name2, F &sel_functor) const  {
+get_view_by_sel (const char *name1, const char *name2, F &sel_functor)  {
 
     static_assert(std::is_base_of<HeteroVector, H>::value,
                   "Only a StdDataFrame can call get_view_by_sel()");
 
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
+    const auto  citer1 = column_tb_.find (name1);
+    const auto  citer2 = column_tb_.find (name2);
+
+    if (citer1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_view_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+    if (citer2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_view_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv1 = data_[citer1->second];
+    const DataVec           &hv2 = data_[citer2->second];
+    const std::vector<T1>   &vec1 = hv1.template get_vector<T1>();
+    const std::vector<T2>   &vec2 = hv2.template get_vector<T2>();
     const size_type         idx_s = indices_.size();
     const size_type         col_s1 = vec1.size();
     const size_type         col_s2 = vec2.size();
@@ -673,8 +1085,8 @@ get_view_by_sel (const char *name1, const char *name2, F &sel_functor) const  {
     col_indices.reserve(idx_s / 2);
     for (size_type i = 0; i < col_s; ++i)
         if (sel_functor (indices_[i],
-                         i < col_s1 ? vec1[i] : get_nan<T1>(),
-                         i < col_s2 ? vec2[i] : get_nan<T2>()))
+                         i < col_s1 ? vec1[i] : _get_nan<T1>(),
+                         i < col_s2 ? vec2[i] : _get_nan<T2>()))
             col_indices.push_back(i);
 
     using TheView = DataFramePtrView<IndexType>;
@@ -682,21 +1094,19 @@ get_view_by_sel (const char *name1, const char *name2, F &sel_functor) const  {
     TheView                         dfv;
     typename TheView::IndexVecType  new_index;
 
-    auto    *nc_this = const_cast<DataFrame<I, H> *>(this);
-
     new_index.reserve(col_indices.size());
     for (const auto citer: col_indices)
-        new_index.push_back(&(nc_this->indices_[citer]));
+        new_index.push_back(&(indices_[citer]));
     dfv.indices_ = std::move(new_index);
 
-    for (auto col_citer : nc_this->column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_view_functor_<size_type, Ts ...>   functor (
             col_citer.first.c_str(),
             col_indices,
             idx_s,
             dfv);
 
-        nc_this->data_[col_citer.second].change(functor);
+        data_[col_citer.second].change(functor);
     }
 
     return (dfv);
@@ -712,10 +1122,45 @@ get_data_by_sel (const char *name1,
                  const char *name3,
                  F &sel_functor) const  {
 
+    const auto  citer1 = column_tb_.find (name1);
+    const auto  citer2 = column_tb_.find (name2);
+    const auto  citer3 = column_tb_.find (name3);
+
+    if (citer1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+    if (citer2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+    if (citer3 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name3);
+        throw ColNotFound (buffer);
+    }
+
     const size_type         idx_s = indices_.size();
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
-    const ColumnVecType<T3> &vec3 = get_column<T3>(name3);
+    const DataVec           &hv1 = data_[citer1->second];
+    const DataVec           &hv2 = data_[citer2->second];
+    const DataVec           &hv3 = data_[citer3->second];
+    const std::vector<T1>   &vec1 = hv1.template get_vector<T1>();
+    const std::vector<T2>   &vec2 = hv2.template get_vector<T2>();
+    const std::vector<T3>   &vec3 = hv3.template get_vector<T3>();
     const size_type         col_s1 = vec1.size();
     const size_type         col_s2 = vec2.size();
     const size_type         col_s3 = vec3.size();
@@ -725,9 +1170,9 @@ get_data_by_sel (const char *name1,
     col_indices.reserve(idx_s / 2);
     for (size_type i = 0; i < col_s; ++i)
         if (sel_functor (indices_[i],
-                         i < col_s1 ? vec1[i] : get_nan<T1>(),
-                         i < col_s2 ? vec2[i] : get_nan<T2>(),
-                         i < col_s3 ? vec3[i] : get_nan<T3>()))
+                         i < col_s1 ? vec1[i] : _get_nan<T1>(),
+                         i < col_s2 ? vec2[i] : _get_nan<T2>(),
+                         i < col_s3 ? vec3[i] : _get_nan<T3>()))
             col_indices.push_back(i);
 
     DataFrame       df;
@@ -738,7 +1183,7 @@ get_data_by_sel (const char *name1,
         new_index.push_back(indices_[citer]);
     df.load_index(std::move(new_index));
 
-    for (auto col_citer : column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_functor_<size_type, Ts ...>    functor (
             col_citer.first.c_str(),
             col_indices,
@@ -759,14 +1204,49 @@ DataFramePtrView<I> DataFrame<I, H>::
 get_view_by_sel (const char *name1,
                  const char *name2,
                  const char *name3,
-                 F &sel_functor) const  {
+                 F &sel_functor)  {
 
     static_assert(std::is_base_of<HeteroVector, H>::value,
                   "Only a StdDataFrame can call get_view_by_sel()");
 
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
-    const ColumnVecType<T3> &vec3 = get_column<T3>(name3);
+    const auto  citer1 = column_tb_.find (name1);
+    const auto  citer2 = column_tb_.find (name2);
+    const auto  citer3 = column_tb_.find (name3);
+
+    if (citer1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_view_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+    if (citer2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_view_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+    if (citer3 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_view_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name3);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv1 = data_[citer1->second];
+    const DataVec           &hv2 = data_[citer2->second];
+    const DataVec           &hv3 = data_[citer3->second];
+    const std::vector<T1>   &vec1 = hv1.template get_vector<T1>();
+    const std::vector<T2>   &vec2 = hv2.template get_vector<T2>();
+    const std::vector<T3>   &vec3 = hv3.template get_vector<T3>();
     const size_type         idx_s = indices_.size();
     const size_type         col_s1 = vec1.size();
     const size_type         col_s2 = vec2.size();
@@ -777,9 +1257,9 @@ get_view_by_sel (const char *name1,
     col_indices.reserve(idx_s / 2);
     for (size_type i = 0; i < col_s; ++i)
         if (sel_functor (indices_[i],
-                         i < col_s1 ? vec1[i] : get_nan<T1>(),
-                         i < col_s2 ? vec2[i] : get_nan<T2>(),
-                         i < col_s3 ? vec3[i] : get_nan<T3>()))
+                         i < col_s1 ? vec1[i] : _get_nan<T1>(),
+                         i < col_s2 ? vec2[i] : _get_nan<T2>(),
+                         i < col_s3 ? vec3[i] : _get_nan<T3>()))
             col_indices.push_back(i);
 
     using TheView = DataFramePtrView<IndexType>;
@@ -787,21 +1267,19 @@ get_view_by_sel (const char *name1,
     TheView                         dfv;
     typename TheView::IndexVecType  new_index;
 
-    auto    *nc_this = const_cast<DataFrame<I, H> *>(this);
-
     new_index.reserve(col_indices.size());
     for (const auto citer: col_indices)
-        new_index.push_back(&(nc_this->indices_[citer]));
+        new_index.push_back(&(indices_[citer]));
     dfv.indices_ = std::move(new_index);
 
-    for (auto col_citer : nc_this->column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_load_view_functor_<size_type, Ts ...>   functor (
             col_citer.first.c_str(),
             col_indices,
             idx_s,
             dfv);
 
-        nc_this->data_[col_citer.second].change(functor);
+        data_[col_citer.second].change(functor);
     }
 
     return (dfv);
@@ -823,10 +1301,10 @@ get_data_by_rand (random_policy spec, double n, size_type seed) const  {
     }
     else if (spec == random_policy::frac_rows_with_seed)  {
         use_seed = true;
-        n_rows = static_cast<size_type>(n * double(index_s));
+        n_rows = static_cast<size_type>(n * index_s);
     }
     else if (spec == random_policy::frac_rows_no_seed)  {
-        n_rows = static_cast<size_type>(n * double(index_s));
+        n_rows = static_cast<size_type>(n * index_s);
     }
 
     if (index_s > 0 && n_rows < index_s - 1)  {
@@ -855,7 +1333,7 @@ get_data_by_rand (random_policy spec, double n, size_type seed) const  {
         DataFrame   df;
 
         df.load_index(std::move(new_index));
-        for (auto &iter : column_list_)  {
+        for (auto &iter : column_tb_)  {
             random_load_data_functor_<Ts ...>   functor (
                 iter.first.c_str(),
                 rand_indices,
@@ -896,10 +1374,10 @@ get_view_by_rand (random_policy spec, double n, size_type seed) const  {
     }
     else if (spec == random_policy::frac_rows_with_seed)  {
         use_seed = true;
-        n_rows = static_cast<size_type>(n * double(index_s));
+        n_rows = static_cast<size_type>(n * index_s);
     }
     else if (spec == random_policy::frac_rows_no_seed)  {
-        n_rows = static_cast<size_type>(n * double(index_s));
+        n_rows = static_cast<size_type>(n * index_s);
     }
 
     if (index_s > 0 && n_rows < index_s - 1)  {
@@ -931,10 +1409,11 @@ get_view_by_rand (random_policy spec, double n, size_type seed) const  {
         TheView dfv;
 
         dfv.indices_ = std::move(new_index);
-        for (auto &iter : column_list_)  {
-            random_load_view_functor_<Ts ...>   functor (iter.first.c_str(),
-                                                         rand_indices,
-                                                         dfv);
+        for (auto &iter : column_tb_)  {
+            random_load_view_functor_<Ts ...>   functor (
+                iter.first.c_str(),
+                rand_indices,
+                dfv);
 
             data_[iter.second].change(functor);
         }
@@ -953,212 +1432,6 @@ get_view_by_rand (random_policy spec, double n, size_type seed) const  {
 #endif // _WIN32
              n_rows, index_s);
     throw BadRange (buffer);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T, typename ... Ts>
-StdDataFrame<T> DataFrame<I, H>::
-get_reindexed(const char *col_to_be_index, const char *old_index_name) const  {
-
-    StdDataFrame<T> result;
-    const auto      &new_idx = get_column<T>(col_to_be_index);
-    const size_type new_idx_s =
-        result.load_index(new_idx.begin(), new_idx.end());
-
-    if (old_index_name)  {
-        const auto      &curr_idx = get_index();
-        const size_type col_s =
-            curr_idx.size() >= new_idx_s ? new_idx_s : curr_idx.size();
-
-        result.template load_column<IndexType>(
-            old_index_name, { curr_idx.begin(), curr_idx.begin() + col_s });
-    }
-
-    for (auto citer : column_list_)  {
-        if (citer.first == col_to_be_index)  continue;
-
-        load_functor_<StdDataFrame<T>, Ts ...>  functor (
-            citer.first.c_str(),
-            0,
-            new_idx_s,
-            result,
-            nan_policy::dont_pad_with_nans);
-
-        data_[citer.second].change(functor);
-    }
-
-    return (result);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T, typename ... Ts>
-DataFrameView<T> DataFrame<I, H>::
-get_reindexed_view(const char *col_to_be_index,
-                   const char *old_index_name) const  {
-
-    static_assert(std::is_base_of<HeteroVector, H>::value,
-                  "Only a StdDataFrame can call get_reindexed_view()");
-
-    auto                *nc_this = const_cast<DataFrame<I, H> *>(this);
-    DataFrameView<T>    result;
-    auto                &new_idx =
-        nc_this->template get_column<T>(col_to_be_index);
-    const size_type     new_idx_s = new_idx.size();
-
-    result.indices_ = typename DataFrameView<T>::IndexVecType();
-    result.indices_.set_begin_end_special(&*(new_idx.begin()),
-                                          &(new_idx.back()));
-    if (old_index_name)  {
-        auto            &curr_idx = nc_this->get_index();
-        const size_type col_s =
-            curr_idx.size() >= new_idx_s ? new_idx_s : curr_idx.size();
-
-        result.template setup_view_column_<IndexType,
-                                           typename IndexVecType::iterator>
-            (old_index_name, { curr_idx.begin(), curr_idx.begin() + col_s });
-    }
-
-    for (auto citer : column_list_)  {
-        if (citer.first == col_to_be_index)  continue;
-
-        view_setup_functor_<DataFrameView<T>, Ts ...>   functor (
-            citer.first.c_str(),
-            0,
-            new_idx_s,
-            result);
-
-        nc_this->data_[citer.second].change(functor);
-    }
-
-    return (result);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename ... Ts>
-std::vector<std::tuple<typename DataFrame<I, H>::ColNameType,
-                       typename DataFrame<I, H>::size_type,
-                       std::type_index>>
-DataFrame<I, H>::get_columns_info () const  {
-
-    std::vector<std::tuple<ColNameType, size_type, std::type_index>> result;
-
-    result.reserve(column_list_.size());
-    for (auto &citer : column_list_)  {
-        columns_info_functor_<Ts ...>   functor (result, citer.first.c_str());
-
-        data_[citer.second].change(functor);
-    }
-
-    return (result);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T>
-bool DataFrame<I, H>::
-pattern_match(const char *col_name,
-              pattern_spec pattern,
-              double epsilon) const  {
-
-    const auto  &col = get_column<T>(col_name);
-
-    switch(pattern)  {
-    case pattern_spec::monotonic_increasing:
-        return (is_monotonic_increasing(col));
-    case pattern_spec::strictly_monotonic_increasing:
-        return (is_strictly_monotonic_increasing(col));
-    case pattern_spec::monotonic_decreasing:
-        return (is_monotonic_decreasing(col));
-    case pattern_spec::strictly_monotonic_decreasing:
-        return (is_strictly_monotonic_decreasing(col));
-    case pattern_spec::normally_distributed:
-        return (is_normal(col, epsilon, false));
-    case pattern_spec::standard_normally_distributed:
-        return (is_normal(col, epsilon, true));
-    case pattern_spec::lognormally_distributed:
-        return (is_lognormal(col, epsilon));
-    default:
-        throw NotImplemented("pattern_match(): "
-                             "Requested pattern is not implemented");
-    }
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T, typename DF, typename F>
-std::vector<T> DataFrame<I, H>::
-combine(const char *col_name, const DF &rhs, F &functor) const  {
-
-    const auto      &lhs_col = get_column<T>(col_name);
-    const auto      &rhs_col = rhs.template get_column<T>(col_name);
-    const size_type col_s = std::min(lhs_col.size(), rhs_col.size());
-    std::vector<T>  result;
-
-    result.reserve(col_s);
-    for (size_type i = 0; i < col_s; ++i)
-        result.push_back(std::move(functor(lhs_col[i], rhs_col[i])));
-
-    return (result);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T, typename DF1, typename DF2, typename F>
-std::vector<T> DataFrame<I, H>::
-combine(const char *col_name,
-        const DF1 &df1,
-        const DF2 &df2,
-        F &functor) const  {
-
-    const auto      &lhs_col = get_column<T>(col_name);
-    const auto      &df1_col = df1.template get_column<T>(col_name);
-    const auto      &df2_col = df2.template get_column<T>(col_name);
-    const size_type col_s =
-        std::min<size_type>({ lhs_col.size(), df1_col.size(), df2_col.size() });
-    std::vector<T>  result;
-
-    result.reserve(col_s);
-    for (size_type i = 0; i < col_s; ++i)
-        result.push_back(
-            std::move(functor(lhs_col[i], df1_col[i], df2_col[i])));
-
-    return (result);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T, typename DF1, typename DF2, typename DF3, typename F>
-std::vector<T> DataFrame<I, H>::
-combine(const char *col_name,
-        const DF1 &df1,
-        const DF2 &df2,
-        const DF3 &df3,
-        F &functor) const  {
-
-    const auto      &lhs_col = get_column<T>(col_name);
-    const auto      &df1_col = df1.template get_column<T>(col_name);
-    const auto      &df2_col = df2.template get_column<T>(col_name);
-    const auto      &df3_col = df3.template get_column<T>(col_name);
-    const size_type col_s = std::min<size_type>(
-        { lhs_col.size(), df1_col.size(), df2_col.size(), df3_col.size() });
-    std::vector<T>  result;
-
-    result.reserve(col_s);
-    for (size_type i = 0; i < col_s; ++i)
-        result.push_back(
-            std::move(functor(lhs_col[i], df1_col[i], df2_col[i], df3_col[i])));
-
-    return (result);
 }
 
 } // namespace hmdf

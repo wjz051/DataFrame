@@ -1,36 +1,11 @@
 // Hossein Moein
 // September 12, 2017
-/*
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-  notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-  names of its contributors may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// Copyright (C) 2018-2019 Hossein Moein
+// Distributed under the BSD Software License (see file License)
 
 #include <DataFrame/DataFrame.h>
 #include <DataFrame/Utils/FixedSizeString.h>
 
-#include <any>
 #include <cstdlib>
 #include <functional>
 
@@ -41,6 +16,355 @@ namespace hmdf
 
 #define gcc_likely(x)    __builtin_expect(!!(x), 1)
 #define gcc_unlikely(x)  __builtin_expect(!!(x), 0)
+
+// ----------------------------------------------------------------------------
+
+inline static void
+_get_token_from_file_ (std::ifstream &file,
+                       char delim,
+                       char *value,
+                       char alt_delim = '\0') {
+
+    char    c;
+    int     count = 0;
+
+    while (file.get (c))
+        if (c == delim)  {
+            break;
+        }
+        else if (c == alt_delim)  {
+            file.unget();
+            break;
+        } 
+        else  {
+            value[count++] = c;
+        }
+
+    value[count] = 0;
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename T, typename V>
+inline static void
+_col_vector_push_back_(V &vec,
+                       std::ifstream &file,
+                       T (*converter)(const char *, char **, int),
+                       io_format file_type = io_format::csv)  {
+
+    char    value[1024];
+    char    c = 0;
+
+    while (file.get(c)) {
+        if (file_type == io_format::csv && c == '\n')  break;
+        else if (file_type == io_format::json && c == ']')  break;
+        file.unget();
+        _get_token_from_file_(file, ',', value,
+                              file_type == io_format::json ? ']' : '\0');
+        vec.push_back(static_cast<T>(converter(value, nullptr, 0)));
+    }
+}
+
+// -------------------------------------
+
+template<typename T, typename V>
+inline static void
+_col_vector_push_back_(V &vec,
+                       std::ifstream &file,
+                       T (*converter)(const char *, char **),
+                       io_format file_type = io_format::csv)  {
+
+    char    value[1024];
+    char    c = 0;
+
+    while (file.get(c)) {
+        if (file_type == io_format::csv && c == '\n')  break;
+        else if (file_type == io_format::json && c == ']')  break;
+        file.unget();
+        _get_token_from_file_(file, ',', value,
+                              file_type == io_format::json ? ']' : '\0');
+        vec.push_back(static_cast<T>(converter(value, nullptr)));
+    }
+}
+
+// -------------------------------------
+
+template<>
+inline void
+_col_vector_push_back_<const char *, std::vector<std::string>>(
+    std::vector<std::string> &vec,
+    std::ifstream &file,
+    const char * (*converter)(const char *, char **),
+    io_format file_type)  {
+
+    char    value[1024];
+    char    c = 0;
+
+    while (file.get(c)) {
+        if (file_type == io_format::csv && c == '\n')  break;
+        else if (file_type == io_format::json && c == ']')  break;
+        file.unget();
+        _get_token_from_file_(file, ',', value,
+                              file_type == io_format::json ? ']' : '\0');
+        vec.push_back(value);
+    }
+}
+
+// -------------------------------------
+
+inline void
+_json_str_col_vector_push_back_(std::vector<std::string> &vec,
+                                std::ifstream &file)  {
+
+    char    value[1024];
+    char    c = 0;
+
+    while (file.get(c))
+        if (c != ' ' && c != '\n' && c != '\t')  {
+            file.unget();
+            break;
+        }
+
+    while (file.get(c)) {
+        if (c == ']')  break;
+        file.unget();
+
+        std::size_t count = 0;
+
+        while (file.get(c))
+            if (c != ' ' && c != '\n' && c != '\t')  break;
+        if (c != '"')
+            throw DataFrameError(
+                "_json_str_col_vector_push_back_(): ERROR: Expected '\"' (0)");
+
+        while (file.get(c))
+            if (c == '"')
+                break;
+            else
+                value[count++] = c;
+        if (c != '"')
+            throw DataFrameError(
+                "DataFrame::read_json_(): ERROR: Expected '\"' (1)");
+
+        value[count] = 0;
+        vec.push_back(value);
+
+        while (file.get(c))
+            if (c != ' ' && c != '\n' && c != '\t')  break;
+        if (c == ']')  break;
+        else if (c != ',')
+            throw DataFrameError(
+                "_json_str_col_vector_push_back_(): ERROR: Expected ',' (2)");
+    }
+}
+
+// -------------------------------------
+
+template<>
+inline void
+_col_vector_push_back_<DateTime, std::vector<DateTime>>(
+    std::vector<DateTime> &vec,
+    std::ifstream &file,
+    DateTime (*converter)(const char *, char **),
+    io_format file_type)  {
+
+    char    value[1024];
+    char    c = 0;
+
+    while (file.get(c)) {
+        if (file_type == io_format::csv && c == '\n')  break;
+        else if (file_type == io_format::json && c == ']')  break;
+        file.unget();
+        _get_token_from_file_(file, ',', value,
+                              file_type == io_format::json ? ']' : '\0');
+
+        time_t      t;
+        int         n;
+        DateTime    dt;
+
+#ifdef _WIN32
+        ::sscanf(value, "%lld.%d", &t, &n);
+#else
+        ::sscanf(value, "%ld.%d", &t, &n);
+#endif // _WIN32
+        dt.set_time(t, n);
+        vec.emplace_back(std::move(dt));
+    }
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename T>
+struct  _IdxParserFunctor_  {
+
+    void operator()(std::vector<T> &,
+                    std::ifstream &file,
+                    io_format file_type = io_format::csv)  {   }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<float>  {
+
+    inline void operator()(std::vector<float> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtof, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<double>  {
+
+    inline void operator()(std::vector<double> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtod, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<long double>  {
+
+    inline void operator()(std::vector<long double> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtold, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<int>  {
+
+    inline void operator()(std::vector<int> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtol, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<long>  {
+
+    inline void operator()(std::vector<long> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtol, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<long long>  {
+
+    inline void operator()(std::vector<long long> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtoll, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<unsigned int>  {
+
+    inline void operator()(std::vector<unsigned int> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtoul, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<unsigned long>  {
+
+    inline void operator()(std::vector<unsigned long> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtoul, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<unsigned long long>  {
+
+    inline void operator()(std::vector<unsigned long long> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtoull, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<std::string>  {
+
+    inline void operator()(std::vector<std::string> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        auto    converter =
+            [](const char *s, char **)-> const char * { return s; };
+
+        _col_vector_push_back_<const char *, std::vector<std::string>>
+            (vec, file, converter, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<DateTime>  {
+
+    inline void operator()(std::vector<DateTime> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        auto    converter =
+            [](const char *, char **)-> DateTime  { return DateTime(); };
+
+        _col_vector_push_back_<DateTime, std::vector<DateTime>>
+            (vec, file, converter, file_type);
+    }
+};
+
+// -------------------------------------
+
+template<>
+struct  _IdxParserFunctor_<bool>  {
+
+    inline void operator()(std::vector<bool> &vec,
+                           std::ifstream &file,
+                           io_format file_type = io_format::csv)  {
+
+        _col_vector_push_back_(vec, file, &::strtol, file_type);
+    }
+};
 
 // ----------------------------------------------------------------------------
 
@@ -67,12 +391,12 @@ void DataFrame<I, H>::read_json_(std::ifstream &file)  {
                 "DataFrame::read_json_(): ERROR: Expected '\"' (1)");
         _get_token_from_file_(file, '"', col_name);
         if (first_col)  {
-            if (strcmp(col_name, DF_INDEX_COL_NAME))
+            if (strcmp(col_name, "INDEX"))
                 throw DataFrameError("DataFrame::read_json_(): ERROR: "
                                      "Expected column name 'INDEX'");
         }
         else {
-            if (! strcmp(col_name, DF_INDEX_COL_NAME))
+            if (! strcmp(col_name, "INDEX"))
                 throw DataFrameError("DataFrame::read_json_(): ERROR: "
                                      "column name 'INDEX' is not allowed");
         }
@@ -274,432 +598,10 @@ void DataFrame<I, H>::read_json_(std::ifstream &file)  {
 // ----------------------------------------------------------------------------
 
 template<typename I, typename  H>
-void DataFrame<I, H>::read_csv_(std::ifstream &file)  {
-
-    char    col_name[256];
-    char    value[32];
-    char    type_str[64];
-    char    c;
-
-    while (file.get(c)) {
-        if (c == '#' || c == '\n' || c == '\0') {
-            if (c == '#')
-                while (file.get(c))
-                    if (c == '\n') break;
-
-            continue;
-        }
-        file.unget();
-
-        _get_token_from_file_(file, ':', col_name);
-        _get_token_from_file_(file, ':', value); // Get the size
-        file.get(c);
-        if (c != '<')
-            throw DataFrameError("DataFrame::read_csv_(): ERROR: Expected "
-                                 "'<' char to specify column type");
-        _get_token_from_file_(file, '>', type_str);
-        file.get(c);
-        if (c != ':')
-            throw DataFrameError("DataFrame::read_csv_(): ERROR: Expected "
-                                 "':' char to start column values");
-
-        if (! ::strcmp(col_name, DF_INDEX_COL_NAME))  {
-            IndexVecType    vec;
-
-            vec.reserve(::atoi(value));
-            _IdxParserFunctor_<IndexType>()(vec, file);
-            load_index(std::forward<IndexVecType &&>(vec));
-        }
-        else  {
-            if (! ::strcmp(type_str, "float"))  {
-                std::vector<float>  &vec = create_column<float>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtof);
-            }
-            else if (! ::strcmp(type_str, "double"))  {
-                std::vector<double> &vec = create_column<double>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtod);
-            }
-            else if (! ::strcmp(type_str, "longdouble"))  {
-                std::vector<long double>    &vec =
-                    create_column<long double>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtold);
-            }
-            else if (! ::strcmp(type_str, "int"))  {
-                std::vector<int> &vec = create_column<int>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtol);
-            }
-            else if (! ::strcmp(type_str, "uint"))  {
-                std::vector<unsigned int>   &vec =
-                    create_column<unsigned int>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtoul);
-            }
-            else if (! ::strcmp(type_str, "long"))  {
-                std::vector<long>   &vec = create_column<long>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtol);
-            }
-            else if (! ::strcmp(type_str, "longlong"))  {
-                std::vector<long long>  &vec =
-                    create_column<long long>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtoll);
-            }
-            else if (! ::strcmp(type_str, "ulong"))  {
-                std::vector<unsigned long>  &vec =
-                    create_column<unsigned long>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtoul);
-            }
-            else if (! ::strcmp(type_str, "ulonglong"))  {
-                std::vector<unsigned long long> &vec =
-                    create_column<unsigned long long>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtoull);
-            }
-            else if (! ::strcmp(type_str, "string"))  {
-                std::vector<std::string>    &vec =
-                    create_column<std::string>(col_name);
-                auto                        converter =
-                    [](const char *s, char **)-> const char * { return s; };
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_<const char *, std::vector<std::string>>
-                    (vec, file, converter);
-            }
-            else if (! ::strcmp(type_str, "DateTime"))  {
-                std::vector<DateTime>   &vec =
-                    create_column<DateTime>(col_name);
-                auto                    converter =
-                    [](const char *, char **)-> DateTime { return DateTime(); };
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_<DateTime, std::vector<DateTime>>
-                    (vec, file, converter);
-            }
-            else if (! ::strcmp(type_str, "bool"))  {
-                std::vector<bool>   &vec = create_column<bool>(col_name);
-
-                vec.reserve(::atoi(value));
-                _col_vector_push_back_(vec, file, &::strtol);
-            }
-            else
-                throw DataFrameError("DataFrame::read_csv_(): ERROR: Unknown "
-                                     "column type");
-        }
-    }
-}
-
-// ----------------------------------------------------------------------------
-
-struct _col_data_spec_  {
-
-    std::any    col_vec { };
-    String32    type_spec { };
-    String64    col_name { };
-
-    template<typename T>
-    inline _col_data_spec_(std::vector<T> cv,
-                           const char *ts,
-                           const char *cn,
-                           std::size_t rs)
-        : col_vec(cv), type_spec(ts), col_name(cn)  {
-
-        std::any_cast<std::vector<T> &>(col_vec).reserve(rs);
-    }
-};
-
-template<typename I, typename  H>
-void DataFrame<I, H>::read_csv2_(std::ifstream &file)  {
-
-    char                            value[8192];
-    char                            c;
-    std::vector<_col_data_spec_>    spec_vec;
-    bool                            header_read = false;
-    size_type                       col_index = 0;
-
-    spec_vec.reserve(32);
-    while (file.get(c)) {
-        if (c == '#' || c == '\n' || c == '\0') {
-            if (c == '#')  {
-                while (file.get(c))
-                    if (c == '\n') break;
-            }
-            else if (c == '\n')
-                col_index = 0;
-
-            continue;
-        }
-        file.unget();
-
-        // First get the header which is column names, sizes and types
-        if (! header_read)  {
-             char   col_name[256];
-             char   type_str[64];
-
-            _get_token_from_file_(file, ':', col_name);
-            _get_token_from_file_(file, ':', value); // Get the size
-            file.get(c);
-            if (c != '<')
-                throw DataFrameError("DataFrame::read_csv2_(): ERROR: Expected "
-                                     "'<' char to specify column type");
-            _get_token_from_file_(file, '>', type_str);
-            file.get(c);
-            if (c == '\n')  header_read = true;
-
-            if (! ::strcmp(type_str, "float"))
-                spec_vec.emplace_back(std::vector<float>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "double"))
-                spec_vec.emplace_back(std::vector<double>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "longdouble"))
-                spec_vec.emplace_back(std::vector<long double>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "int"))
-                spec_vec.emplace_back(std::vector<int>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "uint"))
-                spec_vec.emplace_back(std::vector<unsigned int>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "long"))
-                spec_vec.emplace_back(std::vector<long>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "longlong"))
-                spec_vec.emplace_back(std::vector<long long>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "ulong"))
-                spec_vec.emplace_back(std::vector<unsigned long>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "ulonglong"))
-                spec_vec.emplace_back(std::vector<unsigned long long>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "string"))
-                spec_vec.emplace_back(std::vector<std::string>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "DateTime"))
-                spec_vec.emplace_back(std::vector<DateTime>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else if (! ::strcmp(type_str, "bool"))
-                spec_vec.emplace_back(std::vector<bool>(),
-                                      type_str,
-                                      col_name,
-                                      ::atoi(value));
-            else
-                throw DataFrameError("DataFrame::read_csv2_(): ERROR: "
-                                     "Unknown column type");
-        }
-        else  {  // Now read the data columns row by row
-            _get_token_from_file_(file, ',', value, '\n');
-
-            _col_data_spec_ &col_spec = spec_vec[col_index];
-
-            if (col_spec.type_spec == "float")  {
-                if (value[0] != '\0')
-                    std::any_cast<std::vector<float> &>
-                        (col_spec.col_vec).push_back(strtof(value, nullptr));
-            }
-            else if (col_spec.type_spec == "double")  {
-                if (value[0] != '\0')
-                    std::any_cast<std::vector<double> &>
-                        (col_spec.col_vec).push_back(strtod(value, nullptr));
-            }
-            else if (col_spec.type_spec == "longdouble")  {
-                if (value[0] != '\0')
-                    std::any_cast<std::vector<long double> &>
-                        (col_spec.col_vec).push_back(strtold(value, nullptr));
-            }
-            else if (col_spec.type_spec == "int")  {
-                if (value[0] != '\0')
-                    std::any_cast<std::vector<int> &>
-                        (col_spec.col_vec).push_back(
-                            (int) strtol(value, nullptr, 0));
-            }
-            else if (col_spec.type_spec == "uint")  {
-                if (value[0] != '\0')
-                    std::any_cast<std::vector<unsigned int> &>
-                        (col_spec.col_vec).push_back(
-                            (unsigned int) strtoul(value, nullptr, 0));
-            }
-            else if (col_spec.type_spec == "long")  {
-                if (value[0] != '\0')
-                    std::any_cast<std::vector<long> &>
-                        (col_spec.col_vec).push_back(
-                            strtol(value, nullptr, 0));
-            }
-            else if (col_spec.type_spec == "longlong")  {
-                if (value[0] != '\0')
-                    std::any_cast<std::vector<long long> &>
-                        (col_spec.col_vec).push_back(
-                            strtoll(value, nullptr, 0));
-            }
-            else if (col_spec.type_spec == "ulong")  {
-                if (value[0] != '\0')  {
-                    const unsigned long         v = strtoul(value, nullptr, 0);
-                    std::vector<unsigned long>  &vec =
-                        std::any_cast<std::vector<unsigned long> &>
-                            (col_spec.col_vec);
-
-                    vec.push_back(v);
-                }
-            }
-            else if (col_spec.type_spec == "ulonglong")  {
-                if (value[0] != '\0')
-                    std::any_cast<std::vector<unsigned long long> &>
-                        (col_spec.col_vec).push_back(
-                            strtoull(value, nullptr, 0));
-            }
-            else if (col_spec.type_spec == "string")  {
-                std::any_cast<std::vector<std::string> &>
-                    (col_spec.col_vec).emplace_back(value);
-            }
-            else if (col_spec.type_spec == "DateTime")  {
-                if (value[0] != '\0')  {
-                    time_t      t;
-                    int         n;
-                    DateTime    dt;
-
-#ifdef _WIN32
-                    ::sscanf(value, "%lld.%d", &t, &n);
-#else
-                    ::sscanf(value, "%ld.%d", &t, &n);
-#endif // _WIN32
-                    dt.set_time(t, n);
-                    std::any_cast<std::vector<DateTime> &>
-                        (col_spec.col_vec).emplace_back(
-                            std::move(dt));
-                }
-            }
-            else if (col_spec.type_spec == "bool")  {
-                if (value[0] != '\0')  {
-                    const bool          v =
-                        static_cast<bool>(strtoul(value, nullptr, 0));
-                    std::vector<bool>   &vec =
-                        std::any_cast<std::vector<bool> &>(col_spec.col_vec);
-
-                    vec.push_back(v);
-                }
-            }
-            col_index += 1;
-        }
-    }
-
-    const size_type spec_s = spec_vec.size();
-
-    if (spec_s > 0)  {
-        if (spec_vec[0].col_name != DF_INDEX_COL_NAME)
-            throw DataFrameError("DataFrame::read_csv2_(): ERROR: "
-                                 "Index column is not the first column");
-
-        load_index(std::move(
-                       std::any_cast<IndexVecType &>(spec_vec[0].col_vec)));
-        for (size_type i = 1; i < spec_s; ++i)  {
-            _col_data_spec_ col_spec = spec_vec[i];
-
-            if (col_spec.type_spec == "float")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<float> &>
-                                      (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "double")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<double> &>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "longdouble")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<long double> &>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "int")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<int> &>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "uint")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<unsigned int> &>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "long")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<long> &>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "longlong")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<long long> &>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "ulong")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<unsigned long>&>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "ulonglong")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(
-                                std::any_cast<std::vector<unsigned long long> &>
-                                    (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "string")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<std::string> &>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "DateTime")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<DateTime> &>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-            else if (col_spec.type_spec == "bool")
-                load_column(col_spec.col_name.c_str(),
-                            std::move(std::any_cast<std::vector<bool> &>
-                                          (col_spec.col_vec)),
-                            nan_policy::dont_pad_with_nans);
-        }
-    }
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
 bool DataFrame<I, H>::read (const char *file_name, io_format iof)  {
+
+    static_assert(std::is_base_of<HeteroVector, DataVec>::value,
+                  "Only a StdDataFrame can call read()");
 
     std::ifstream   file;
 
@@ -711,29 +613,144 @@ bool DataFrame<I, H>::read (const char *file_name, io_format iof)  {
         throw DataFrameError(err.c_str());
     }
 
-    read(file, iof);
-    file.close();
-    return(true);
-}
+    if (iof == io_format::csv)  {
+        char    col_name[256];
+        char    value[32];
+        char    type_str[64];
+        char    c;
 
-// ----------------------------------------------------------------------------
+        while (file.get(c)) {
+            if (c == '#' || c == '\n' || c == '\0') {
+                if (c == '#')
+                    while (file.get(c))
+                        if (c == '\n') break;
 
-template<typename I, typename  H>
-template<typename S>
-bool DataFrame<I, H>::read (S &in_s, io_format iof)  {
+                continue;
+            }
+            file.unget();
 
-    static_assert(std::is_base_of<HeteroVector, DataVec>::value,
-                  "Only a StdDataFrame can call read()");
+            _get_token_from_file_(file, ':', col_name);
+            _get_token_from_file_(file, ':', value); // Get the size
+            file.get(c);
+            if (c != '<')
+                throw DataFrameError("DataFrame::read(): ERROR: Expected "
+                                     "'<' char to specify column type");
+            _get_token_from_file_(file, '>', type_str);
+            file.get(c);
+            if (c != ':')
+                throw DataFrameError("DataFrame::read(): ERROR: Expected "
+                                     "':' char to start column values");
 
-    if (iof == io_format::csv)
-        read_csv_ (in_s);
-    else if (iof == io_format::csv2)
-        read_csv2_ (in_s);
+            if (! ::strcmp(col_name, "INDEX"))  {
+                IndexVecType    vec;
+
+                vec.reserve(::atoi(value));
+                _IdxParserFunctor_<IndexType>()(vec, file);
+                load_index(std::forward<IndexVecType &&>(vec));
+            }
+            else  {
+                if (! ::strcmp(type_str, "float"))  {
+                    std::vector<float>  &vec = create_column<float>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtof);
+                }
+                else if (! ::strcmp(type_str, "double"))  {
+                    std::vector<double> &vec = create_column<double>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtod);
+                }
+                else if (! ::strcmp(type_str, "longdouble"))  {
+                    std::vector<long double>    &vec =
+                        create_column<long double>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtold);
+                }
+                else if (! ::strcmp(type_str, "int"))  {
+                    std::vector<int> &vec = create_column<int>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtol);
+                }
+                else if (! ::strcmp(type_str, "uint"))  {
+                    std::vector<unsigned int>   &vec =
+                        create_column<unsigned int>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtoul);
+                }
+                else if (! ::strcmp(type_str, "long"))  {
+                    std::vector<long>   &vec = create_column<long>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtol);
+                }
+                else if (! ::strcmp(type_str, "longlong"))  {
+                    std::vector<long long>  &vec =
+                        create_column<long long>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtoll);
+                }
+                else if (! ::strcmp(type_str, "ulong"))  {
+                    std::vector<unsigned long>  &vec =
+                        create_column<unsigned long>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtoul);
+                }
+                else if (! ::strcmp(type_str, "ulonglong"))  {
+                    std::vector<unsigned long long> &vec =
+                        create_column<unsigned long long>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtoull);
+                }
+                else if (! ::strcmp(type_str, "string"))  {
+                    std::vector<std::string>    &vec =
+                        create_column<std::string>(col_name);
+                    auto                        converter =
+                        [](const char *s, char **)-> const char * {
+                            return s;
+                        };
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_
+                        <const char *, std::vector<std::string>>
+                        (vec, file, converter);
+                }
+                else if (! ::strcmp(type_str, "DateTime"))  {
+                    std::vector<DateTime>   &vec =
+                        create_column<DateTime>(col_name);
+                    auto                    converter =
+                        [](const char *, char **)-> DateTime {
+                            return DateTime();
+                        };
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_<DateTime, std::vector<DateTime>>
+                        (vec, file, converter);
+                }
+                else if (! ::strcmp(type_str, "bool"))  {
+                    std::vector<bool>   &vec = create_column<bool>(col_name);
+
+                    vec.reserve(::atoi(value));
+                    _col_vector_push_back_(vec, file, &::strtol);
+                }
+                else
+                    throw DataFrameError ("DataFrame::read(): ERROR: Unknown "
+                                          "column type");
+            }
+        }
+    }
     else if (iof == io_format::json)
-        read_json_ (in_s);
+        read_json_ (file);
     else
         throw NotImplemented("read(): This io_format is not implemented");
 
+    file.close();
     return(true);
 }
 
@@ -744,22 +761,10 @@ std::future<bool> DataFrame<I, H>::
 read_async(const char *file_name, io_format iof) {
 
     return (std::async(std::launch::async,
-                       [file_name, iof, this] () -> bool  {
-                           return (this->read(file_name, iof));
-                       }));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename S>
-std::future<bool> DataFrame<I, H>::
-read_async(S &in_s, io_format iof) {
-
-    return (std::async(std::launch::async,
-                       [&in_s, iof, this] () -> bool  {
-                           return (this->read<S>(in_s, iof));
-                       }));
+                       &DataFrame::read,
+                       this,
+                       file_name,
+                       iof));
 }
 
 } // namespace hmdf

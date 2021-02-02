@@ -1,59 +1,18 @@
 // Hossein Moein
 // March 18, 2018
-/*
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-  notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-  names of its contributors may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// Copyright (C) 2018-2019 Hossein Moein
+// Distributed under the BSD Software License (see file License)
 
 #pragma once
 
 #include <cstdio>
 #include <ctime>
-#include <functional>
-#include <limits>
 #include <stdexcept>
 #include <string>
 #include <sys/timeb.h>
 
-#if defined(_WIN32)
+#ifdef _WIN32
 #  include <windows.h>
-#  if defined(HMDF_SHARED)
-#    ifdef LIBRARY_EXPORTS
-#      define LIBRARY_API __declspec(dllexport)
-#    else
-#      define LIBRARY_API __declspec(dllimport)
-#    endif // LIBRARY_EXPORTS
-#  endif // HMDF_SHARED
-#  ifdef min
-#    undef min
-#  endif // min
-#  ifdef max
-#    undef max
-#  endif // max
-#else
-#  define LIBRARY_API
 #endif // _WIN32
 
 // ----------------------------------------------------------------------------
@@ -160,7 +119,7 @@ enum class DT_DATE_STYLE : unsigned char  {
 
 // ----------------------------------------------------------------------------
 
-class LIBRARY_API DateTime {
+class   DateTime  {
 
 public:
 
@@ -171,21 +130,14 @@ public:
     using SecondType = unsigned short int;   // 0 - 59
     using MillisecondType = short int;       // 0 - 999
     using MicrosecondType = int;             // 0 - 999,999
-    using NanosecondType = int;              // 0 - 999,999,999
+    using NanosecondType =  int;             // 0 - 999,999,999
     using EpochType = time_t;                // Signed epoch
     using LongTimeType = long long int;      // Nano seconds since epoch
 
 private:
 
-    template<typename T>
-    using INVALID_VALUE_ = typename std::numeric_limits<T>;
-
     static const char       *TIMEZONES_[];
-    static const EpochType  INVALID_TIME_T_ = INVALID_VALUE_<EpochType>::max();
-    static const DateType   INVALID_DATE_ = INVALID_VALUE_<DateType>::max();
-    static const HourType   INVALID_HOUR_ = INVALID_VALUE_<HourType>::max();
-    static const MinuteType INVALID_MINUTE_ = INVALID_VALUE_<MinuteType>::max();
-    static const SecondType INVALID_SECOND_ = INVALID_VALUE_<SecondType>::max();
+    static const EpochType  INVALID_TIME_T_ = -1;
 
     // This guy initializes anything that needs to be initialized
     // statically.
@@ -196,17 +148,14 @@ private:
 
     friend class    DT_initializer;
 
-    DateType        date_ { INVALID_DATE_ };  // Like 20190518
-    HourType        hour_ { INVALID_HOUR_ };
-    MinuteType      minute_ { INVALID_MINUTE_ };
-    SecondType      second_ { INVALID_SECOND_ };
+    DateType        date_ { DateType(INVALID_TIME_T_) };   // e.g. 20001025
+    HourType        hour_ { HourType(INVALID_TIME_T_) };
+    MinuteType      minute_ { MinuteType(INVALID_TIME_T_) };
+    SecondType      second_ { SecondType(INVALID_TIME_T_) };
     NanosecondType  nanosecond_ { 0 };
     EpochType       time_ { INVALID_TIME_T_ }; // Sec since 01/01/1970 (Epoch)
     DT_WEEKDAY      week_day_ { DT_WEEKDAY::BAD_DAY };
-    DT_TIME_ZONE    time_zone_ { DT_TIME_ZONE::LOCAL };
-
-    inline static void change_env_timezone_(DT_TIME_ZONE time_zone);
-    inline static void reset_env_timezone_(DT_TIME_ZONE time_zone);
+    DT_TIME_ZONE    time_zone_ { };
 
 public:
 
@@ -390,21 +339,6 @@ inline S &operator << (S &o, const DateTime &rhs)  {
 }
 
 } // namespace hmdf
-
-// ----------------------------------------------------------------------------
-
-namespace std  {
-template<>
-struct  hash<typename hmdf::DateTime>  {
-
-    inline size_t
-    operator()(const typename hmdf::DateTime &key) const noexcept {
-
-        return (hash<typename hmdf::DateTime::LongTimeType>()(key.long_time()));
-    }
-};
-
-} // namespace std
 
 // ----------------------------------------------------------------------------
 

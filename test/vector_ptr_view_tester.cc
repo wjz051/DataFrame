@@ -1,31 +1,7 @@
 // Hossein Moein
 // April 29, 2019
-/*
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-  notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-  names of its contributors may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// Copyright (C) 2019-2021 Hossein Moein
+// Distributed under the BSD Software License (see file License)
 
 #include <DataFrame/Vectors/VectorPtrView.h>
 
@@ -55,7 +31,7 @@ int main (int argCnt, char *argVctr [])  {
     assert(vec_view2.front() == 1);
     assert(vec_view.back() == 10);
 
-    std::size_t counter = 0;
+	std::size_t counter = 0;
 
 #ifndef _WIN32
     for (VectorPtrView<int>::const_iterator citer = vec_view.begin();
@@ -105,10 +81,8 @@ int main (int argCnt, char *argVctr [])  {
 
     counter = int_vec2.size();
     for (std::vector<int>::const_iterator citer = int_vec2.begin();
-         citer != int_vec2.end(); ++citer)  {
-        assert(*citer == counter);
-        counter -= 1;
-    }
+         citer != int_vec2.end(); ++citer)
+        assert(*citer == counter--);
     assert(counter == 0);
 
     vec_view2.push_back(&(int_vec[3]));
@@ -129,22 +103,6 @@ int main (int argCnt, char *argVctr [])  {
     assert(vec_view2[4] == 4);
     assert(vec_view2[20] == 1);
     assert(vec_view2[19] == 2);
-
-    VectorPtrView<int>::const_iterator item = vec_view.begin();
-
-    assert(*item == 1);
-    assert(*(item++) == 1);
-    assert(*item == 2);
-
-    std::vector<int>    ivec { 0, 1, 2, 3 };
-    VectorPtrView<int>  vpw = ivec;
-
-    assert(vpw.size() == 4);
-
-    const std::vector<int>  civec { 0, 1, 2, 3 };
-    VectorConstPtrView<int> cvpw = civec;
-
-    assert(cvpw.size() == 4);
 
     return (EXIT_SUCCESS);
 }

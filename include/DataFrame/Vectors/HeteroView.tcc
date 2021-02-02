@@ -1,31 +1,7 @@
 // Hossein Moein
 // October 24, 2018
-/*
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-  notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-  names of its contributors may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// Copyright (C) 2018-2019 Hossein Moein
+// Distributed under the BSD Software License (see file License)
 
 #include <DataFrame/Vectors/HeteroVector.h>
 
@@ -36,6 +12,18 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace hmdf
 {
 
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+template<typename T>
+std::unordered_map<const HeteroView *, VectorView<T>> HeteroView::views_;
+#endif // defined(__linux__) || defined(__unix__) || defined(__APPLE__)
+
+#ifdef _WIN32
+template<typename T>
+std::unordered_map<const HeteroView *, VectorView<T>> HeteroView::views_{};
+#endif // _WIN32
+
+// ----------------------------------------------------------------------------
+
 template<typename T>
 HeteroView::HeteroView(T *begin_ptr, T *end_ptr)
     : clear_function_([](HeteroView &hv) { views_<T>.erase(&hv); }),
@@ -45,25 +33,6 @@ HeteroView::HeteroView(T *begin_ptr, T *end_ptr)
               views_<T>[&to] = std::move(views_<T>[&from]); })  {
 
     views_<T>.emplace(this, VectorView<T>(begin_ptr, end_ptr));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename T>
-void HeteroView::set_begin_end_special(T *bp, T *ep_1)  {
-
-    clear_function_ = [](HeteroView &hv) { views_<T>.erase(&hv); };
-    copy_function_  = [](const HeteroView &from, HeteroView &to)  {
-                          views_<T>[&to] = views_<T>[&from];
-                      };
-    move_function_ = [](HeteroView &from, HeteroView &to)  {
-                         views_<T>[&to] = std::move(views_<T>[&from]);
-                     };
-
-    VectorView<T>   vv;
-
-    vv.set_begin_end_special(bp, ep_1);
-    views_<T>.emplace(this, vv);
 }
 
 // ----------------------------------------------------------------------------
@@ -235,55 +204,6 @@ T &HeteroView::front()  { return (get_vector<T>().front ()); }
 
 template<typename T>
 const T &HeteroView::front() const  { return (get_vector<T>().front ()); }
-
-// ----------------------------------------------------------------------------
-
-template<typename T>
-HeteroView::iterator<T>
-HeteroView::begin()  { return (get_vector<T>().begin ()); }
-
-// ----------------------------------------------------------------------------
-
-template<typename T>
-HeteroView::const_iterator<T>
-HeteroView::begin() const  { return (get_vector<T>().begin ()); }
-
-// ----------------------------------------------------------------------------
-
-template<typename T>
-HeteroView::iterator<T>
-HeteroView::end()  { return (get_vector<T>().end ()); }
-
-// ----------------------------------------------------------------------------
-
-template<typename T>
-HeteroView::const_iterator<T>
-HeteroView::end() const  { return (get_vector<T>().end ()); }
-
-
-// ----------------------------------------------------------------------------
-
-template<typename T>
-HeteroView::reverse_iterator<T>
-HeteroView::rbegin()  { return (get_vector<T>().rbegin ()); }
-
-// ----------------------------------------------------------------------------
-
-template<typename T>
-HeteroView::const_reverse_iterator<T>
-HeteroView::rbegin() const  { return (get_vector<T>().rbegin ()); }
-
-// ----------------------------------------------------------------------------
-
-template<typename T>
-HeteroView::reverse_iterator<T>
-HeteroView::rend()  { return (get_vector<T>().rend ()); }
-
-// ----------------------------------------------------------------------------
-
-template<typename T>
-HeteroView::const_reverse_iterator<T>
-HeteroView::rend() const  { return (get_vector<T>().rend ()); }
 
 } // namespace hmdf
 

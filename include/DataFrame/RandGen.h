@@ -1,37 +1,11 @@
 // Hossein Moein
 // July 22, 2019
-/*
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-  notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-  names of its contributors may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// Copyright (C) 2019-2022 Hossein Moein
+// Distributed under the BSD Software License (see file License)
 
 #pragma once
 
 #include <DataFrame/DataFrameTypes.h>
-
-#include <vector>
 
 // ----------------------------------------------------------------------------
 
@@ -61,7 +35,7 @@ gen_uniform_int_dist(std::size_t n, const RandGenParams<T> &params = { });
 // It generates n uniform real distribution random numbers.
 //                1
 // P(i|a,b) = ----------
-//              b − a
+//              b − a 
 //
 // It returns the vector of results
 // Optional parameters to set:
@@ -81,7 +55,7 @@ gen_uniform_real_dist(std::size_t n, const RandGenParams<T> &params = { });
 // function. The probability of true is:
 //          ⎧     p if b == true
 // P(b|p) = ⎨
-//          ⎩ 1 - p if b == fasle
+//          ⎩ 1 - p if b == fasle 
 //
 // It returns the vector of results
 // Optional parameters to set:
@@ -97,7 +71,7 @@ gen_bernoulli_dist(std::size_t n, const RandGenParams<bool> &params = { });
 
 // Produces random non-negative integer values i, distributed according to
 // discrete probability function:
-//            (t)    i         t-i
+//            (t)    i          t-i
 // P(i|t,p) = (i) . p . (1 - p)
 //
 // It returns the vector of results
@@ -157,7 +131,7 @@ gen_geometric_dist(std::size_t n, const RandGenParams<T> &params = { });
 
 // Produces random non-negative integer values i, distributed according to
 // discrete probability function:
-//             -u    i
+//             -u    i      
 //            e     u
 // P(i|u) = ------------
 //               i!
@@ -353,42 +327,6 @@ gen_fisher_f_dist(std::size_t n, const RandGenParams<T> &params = { });
 template<typename T>
 std::vector<T>
 gen_student_t_dist(std::size_t n, const RandGenParams<T> &params = { });
-
-// ----------------------------------------------------------------------------
-
-// This function generates n logarithmically spaced numbers between the given
-// base raised to the power of first to last.
-//
-template<typename T>
-std::vector<T>
-gen_log_space_nums(std::size_t n, T first, T last, T base);
-
-// ----------------------------------------------------------------------------
-
-// This function generates n evenly spaced numbers between the given first and
-// last parameters.
-// The result vector always starts with first and ends shy of last
-//
-template<typename T>
-std::vector<T>
-gen_even_space_nums(std::size_t n, T first, T last);
-
-// ----------------------------------------------------------------------------
-
-// A number is termed as triangular number if we can represent it in the form
-// of triangular grid of points such that the points form an equilateral
-// triangle and each row contains as many points as the row number, i.e., the
-// first row has one point, second row has two points, third row has three
-// points and so on.
-// This function generates n triangle numbers arranged in an equilateral
-// triangle. The n-th triangular number is equal to the sum of the n natural
-// numbers from 1 to n (assuming first is 1 and last is n).
-// The result vector always starts with a value >= than first and ends with
-// a value <= than last.
-//
-template<typename T>
-std::vector<T>
-gen_triangular_nums(T last, T first = T(1));
 
 } // namespace hmdf
 

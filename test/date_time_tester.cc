@@ -1,34 +1,9 @@
 // Hossein Moein
 // March 18, 2018
-/*
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-  notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-  names of its contributors may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// Copyright (C) 2018-2019 Hossein Moein
+// Distributed under the BSD Software License (see file License)
 
 #include <DataFrame/Utils/DateTime.h>
-#include <DataFrame/Utils/FixedSizePriorityQueue.h>
 #include <DataFrame/Utils/FixedSizeString.h>
 
 #include <cassert>
@@ -37,51 +12,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string>
 
 using namespace hmdf;
-
-// ----------------------------------------------------------------------------
-
-static void test_priority_queue()  {
-
-    FixedSizePriorityQueue<double, 5>   q;
-
-    q.push(3);
-    assert(q.top() == 3);
-    assert(q.size() == 1);
-    assert((q.data() == std::vector<double> { 3 }));
-    q.push(7);
-    assert(q.top() == 7);
-    assert(q.size() == 2);
-    assert((q.data() == std::vector<double> { 3, 7 }));
-    q.push(5);
-    assert(q.top() == 7);
-    assert(q.size() == 3);
-    assert((q.data() == std::vector<double> { 3, 5, 7 }));
-
-    q.push(10);
-    q.push(12);
-    q.push(15);
-    assert(q.top() == 15);
-    assert(q.size() == 5);
-    assert((q.data() == std::vector<double> { 5, 7, 10, 12, 15 }));
-
-    q.pop();
-    assert(q.top() == 12);
-    assert(q.size() == 4);
-    assert((q.data() == std::vector<double> { 5, 7, 10, 12 }));
-    q.pop();
-    assert(q.top() == 10);
-    assert(q.size() == 3);
-    assert((q.data() == std::vector<double> { 5, 7, 10 }));
-    q.pop();
-    q.pop();
-    q.pop();
-    q.pop();
-    q.pop();
-    q.pop();
-    assert(q.size() == 0);
-    assert(q.empty());
-    assert((q.data() == std::vector<double> {  }));
-}
 
 // ----------------------------------------------------------------------------
 
@@ -891,22 +821,6 @@ int main (int argc, char *argv [])  {
         assert(now.long_time() == 1559229305500000000);
     }
 
-    {
-        // Testing DateTime's hash value
-
-        DateTime    now (20190530, 11, 15, 5, 123000000,
-                         DT_TIME_ZONE::AM_NEW_YORK);
-
-        std::cout << "Hash Value:      " << std::hash<DateTime>()(now)
-                  << std::endl;
-        std::cout << "Long Time Value: " << now.long_time() << std::endl;
-        now.add_nanoseconds (1040506079);
-        std::cout << "Hash Value:      " << std::hash<DateTime>()(now)
-                  << std::endl;
-        std::cout << "Long Time Value: " << now.long_time() << std::endl;
-    }
-
-    test_priority_queue();
     return (EXIT_SUCCESS);
 }
 

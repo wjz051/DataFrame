@@ -1,31 +1,7 @@
 // Hossein Moein
 // September 12, 2017
-/*
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-  notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-  notice, this list of conditions and the following disclaimer in the
-  documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-  names of its contributors may be used to endorse or promote products
-  derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// Copyright (C) 2018-2019 Hossein Moein
+// Distributed under the BSD Software License (see file License)
 
 #include <DataFrame/DataFrame.h>
 
@@ -36,6 +12,17 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace hmdf
 {
 
+#if defined(WIN32) || defined(_WIN32)
+#  ifdef min
+#    undef min
+#  endif // min
+#  ifdef max
+#    undef max
+#  endif // max
+#endif // WIN32 || _WIN32
+
+// ----------------------------------------------------------------------------
+
 template<typename I, typename  H>
 template<typename T>
 std::vector<T> &DataFrame<I, H>::create_column (const char *name)  {
@@ -43,31 +30,18 @@ std::vector<T> &DataFrame<I, H>::create_column (const char *name)  {
     static_assert(std::is_base_of<HeteroVector, DataVec>::value,
                   "Only a StdDataFrame can call create_column()");
 
-    if (! ::strcmp(name, DF_INDEX_COL_NAME))
+    if (! ::strcmp(name, "INDEX"))
         throw DataFrameError ("DataFrame::create_column(): ERROR: "
                               "Data column name cannot be 'INDEX'");
-    if (column_tb_.find(name) != column_tb_.end())  {
-        char    buffer [512];
 
-        sprintf (buffer,
-                 "DataFrame::create_column(): "
-                 "ERROR: Column '%s' already exists",
-                 name);
-        throw DataFrameError (buffer);
-    }
-
-    if (column_list_.empty())  {
-        column_list_.reserve(32);
-        data_.reserve(32);
-    }
     data_.emplace_back (DataVec());
     column_tb_.emplace (name, data_.size() - 1);
-    column_list_.emplace_back (name, data_.size() - 1);
 
     DataVec         &hv = data_.back();
-    const SpinGuard guard(lock_);
+    std::vector<T>  &vec = hv.template get_vector<T>();
 
-    return (hv.template get_vector<T>());
+    // vec.resize(indices_.size(), _get_nan<T>());
+    return (vec);
 }
 
 // ----------------------------------------------------------------------------
@@ -78,14 +52,14 @@ void DataFrame<I, H>::remove_column (const char *name)  {
     static_assert(std::is_base_of<HeteroVector, DataVec>::value,
                   "Only a StdDataFrame can call remove_column()");
 
-    if (! ::strcmp(name, DF_INDEX_COL_NAME))
+    if (! ::strcmp(name, "INDEX"))
         throw DataFrameError ("DataFrame::remove_column(): ERROR: "
                               "Data column name cannot be 'INDEX'");
 
     const auto  iter = column_tb_.find (name);
 
     if (iter == column_tb_.end())  {
-        char    buffer [512];
+        char buffer [512];
 
         sprintf (buffer,
                  "DataFrame::remove_column(): ERROR: Cannot find column '%s'",
@@ -97,13 +71,6 @@ void DataFrame<I, H>::remove_column (const char *name)  {
     // indices in the hash table column_tb_
     /* data_.erase (data_.begin() + iter->second); */
     column_tb_.erase (iter);
-    for (size_type i = 0; i < column_list_.size(); ++i)  {
-        if (column_list_[i].first == name)  {
-            column_list_.erase(column_list_.begin() + i);
-            break;
-        }
-    }
-
     return;
 }
 
@@ -115,14 +82,13 @@ void DataFrame<I, H>::rename_column (const char *from, const char *to)  {
     static_assert(std::is_base_of<HeteroVector, DataVec>::value,
                   "Only a StdDataFrame can call rename_column()");
 
-    if (! ::strcmp(from, DF_INDEX_COL_NAME) ||
-        ! ::strcmp(to, DF_INDEX_COL_NAME))
+    if (! ::strcmp(from, "INDEX") || ! ::strcmp(to, "INDEX"))
         throw DataFrameError ("DataFrame::rename_column(): ERROR: "
                               "Data column name cannot be 'INDEX'");
 
-    const auto  from_iter = column_tb_.find (from);
+    const auto  iter = column_tb_.find (from);
 
-    if (from_iter == column_tb_.end())  {
+    if (iter == column_tb_.end())  {
         char buffer [512];
 
         sprintf (buffer,
@@ -130,45 +96,9 @@ void DataFrame<I, H>::rename_column (const char *from, const char *to)  {
                  from);
         throw ColNotFound (buffer);
     }
-    if (column_tb_.find (to) != column_tb_.end())  {
-        char buffer [512];
 
-        sprintf (buffer,
-                 "DataFrame::rename_column(): "
-                 "ERROR: Column '%s' already exists",
-                 to);
-        throw DataFrameError (buffer);
-    }
-
-    column_tb_.emplace (to, from_iter->second);
-    column_list_.emplace_back (to, from_iter->second);
-    remove_column(from);
-    return;
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename FROM_T, typename TO_T>
-void DataFrame<I, H>::
-retype_column (const char *name,
-               std::function<TO_T (const FROM_T &)> convert_func)  {
-
-    static_assert(std::is_base_of<HeteroVector, DataVec>::value,
-                  "Only a StdDataFrame can call retype_column()");
-
-    if (! ::strcmp(name, DF_INDEX_COL_NAME))
-        throw DataFrameError ("DataFrame::retype_column(): ERROR: "
-                              "Data column name cannot be 'INDEX'");
-
-    const ColumnVecType<FROM_T> &old_vec = get_column<FROM_T>(name);
-    std::vector<TO_T>           new_vec;
-
-    new_vec.reserve(old_vec.size());
-    for (const auto &citer : old_vec)
-        new_vec.push_back(std::move(convert_func(citer)));
-    remove_column(name);
-    load_column<TO_T>(name, std::move(new_vec));
+    column_tb_.emplace (to, iter->second);
+    column_tb_.erase (iter);
     return;
 }
 
@@ -191,7 +121,7 @@ DataFrame<I, H>::load_data (IndexVecType &&indices, Ts&& ... args)  {
             cnt += this->_load_pair(pa);
         };
 
-    for_each_in_tuple (args_tuple, fc);
+    for_each_in_tuple_ (args_tuple, fc);
 
     return (cnt);
 }
@@ -206,9 +136,12 @@ DataFrame<I, H>::load_index(const ITR &begin, const ITR &end)  {
     static_assert(std::is_base_of<HeteroVector, DataVec>::value,
                   "Only a StdDataFrame can call load_index()");
 
-    indices_.clear();
-    indices_.insert (indices_.end(), begin, end);
-    return (indices_.size());
+    const size_type s = std::distance(begin, end);
+
+    indices_.clear ();
+    indices_.reserve (s);
+    indices_.insert (indices_.begin (), begin, end);
+    return (s);
 }
 
 // ----------------------------------------------------------------------------
@@ -222,6 +155,93 @@ DataFrame<I, H>::load_index(IndexVecType &&idx)  {
 
     indices_ = idx;
     return (indices_.size());
+}
+
+// ----------------------------------------------------------------------------
+
+template<typename T>
+inline static void
+_generate_ts_index_(std::vector<T> &index_vec,
+                    DateTime &start_di,
+                    time_frequency t_freq,
+                    long increment)  {
+
+    switch(t_freq)  {
+    case time_frequency::annual:
+        index_vec.push_back(static_cast<T>(start_di.date()));
+        start_di.add_years(increment);
+        break;
+    case time_frequency::monthly:
+        index_vec.push_back(static_cast<T>(start_di.date()));
+        start_di.add_months(increment);
+        break;
+    case time_frequency::weekly:
+        index_vec.push_back(static_cast<T>(start_di.date()));
+        start_di.add_days(increment * 7);
+        break;
+    case time_frequency::daily:
+        index_vec.push_back(static_cast<T>(start_di.date()));
+        start_di.add_days(increment);
+        break;
+    case time_frequency::hourly:
+        index_vec.push_back(static_cast<T>(start_di.time()));
+        start_di.add_seconds(increment * 60 * 60);
+        break;
+    case time_frequency::minutely:
+        index_vec.push_back(static_cast<T>(start_di.time()));
+        start_di.add_seconds(increment * 60);
+        break;
+    case time_frequency::secondly:
+        index_vec.push_back(static_cast<T>(start_di.time()));
+        start_di.add_seconds(increment);
+        break;
+    case time_frequency::millisecondly:
+        index_vec.push_back(static_cast<T>(start_di.long_time()));
+        start_di.add_nanoseconds(increment * 1000000);
+        break;
+    default:
+        break;
+    }
+}
+
+// ------------------------------------
+
+template<>
+inline void
+_generate_ts_index_<DateTime>(std::vector<DateTime> &index_vec,
+                              DateTime &start_di,
+                              time_frequency t_freq,
+                              long increment)  {
+
+    index_vec.push_back(start_di);
+    switch(t_freq)  {
+    case time_frequency::annual:
+        start_di.add_years(increment);
+        break;
+    case time_frequency::monthly:
+        start_di.add_months(increment);
+        break;
+    case time_frequency::weekly:
+        start_di.add_days(increment * 7);
+        break;
+    case time_frequency::daily:
+        start_di.add_days(increment);
+        break;
+    case time_frequency::hourly:
+        start_di.add_seconds(increment * 60 * 60);
+        break;
+    case time_frequency::minutely:
+        start_di.add_seconds(increment * 60);
+        break;
+    case time_frequency::secondly:
+        start_di.add_seconds(increment);
+        break;
+    case time_frequency::millisecondly:
+        start_di.add_nanoseconds(increment * 1000000);
+        break;
+    default:
+        break;
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -312,7 +332,8 @@ DataFrame<I, H>::append_index(Index2D<const ITR &> range)  {
 
     const size_type s = std::distance(range.begin, range.end);
 
-    indices_.insert(indices_.end(), range.begin, range.end);
+    indices_.reserve (indices_.size() + s);
+    indices_.insert (indices_.end (), range.begin, range.end);
     return (s);
 }
 
@@ -361,21 +382,21 @@ load_column (const char *name,
     if (iter == column_tb_.end())
         vec_ptr = &(create_column<T>(name));
     else  {
-        DataVec         &hv = data_[iter->second];
-        const SpinGuard guard(lock_);
+        DataVec &hv = data_[iter->second];
 
         vec_ptr = &(hv.template get_vector<T>());
     }
 
     vec_ptr->clear();
-    vec_ptr->insert (vec_ptr->end(), range.begin, range.end);
+    vec_ptr->reserve(idx_s);
+    vec_ptr->insert (vec_ptr->begin (), range.begin, range.end);
 
     size_type   ret_cnt = s;
 
     s = vec_ptr->size();
     if (padding == nan_policy::pad_with_nans && s < idx_s)  {
         for (size_type i = 0; i < idx_s - s; ++i)  {
-            vec_ptr->push_back (std::move(get_nan<T>()));
+            vec_ptr->push_back (std::move(_get_nan<T>()));
             ret_cnt += 1;
         }
     }
@@ -395,12 +416,8 @@ setup_view_column_ (const char *name, Index2D<ITR> range)  {
                   "Only a DataFrameView or DataFramePtrView can "
                   "call setup_view_column_()");
 
-    DataVec dv;
-
-    dv.set_begin_end_special(&*(range.begin), &*(range.end - 1));
-    data_.emplace_back (dv);
+    data_.emplace_back (DataVec(&*(range.begin), &*(range.end)));
     column_tb_.emplace (name, data_.size() - 1);
-    column_list_.emplace_back (name, data_.size() - 1);
 
     return;
 }
@@ -433,7 +450,7 @@ load_column (const char *name, std::vector<T> &&data, nan_policy padding)  {
 
     if (padding == nan_policy::pad_with_nans && data_s < idx_s)  {
         for (size_type i = 0; i < idx_s - data_s; ++i)  {
-            data.push_back (std::move(get_nan<T>()));
+            data.push_back (std::move(_get_nan<T>()));
             ret_cnt += 1;
         }
     }
@@ -444,71 +461,13 @@ load_column (const char *name, std::vector<T> &&data, nan_policy padding)  {
     if (iter == column_tb_.end())
         vec_ptr = &(create_column<T>(name));
     else  {
-        DataVec         &hv = data_[iter->second];
-        const SpinGuard guard(lock_);
+        DataVec &hv = data_[iter->second];
 
         vec_ptr = &(hv.template get_vector<T>());
     }
 
     *vec_ptr = std::move(data);
     return (ret_cnt);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T>
-typename DataFrame<I, H>::size_type
-DataFrame<I, H>::
-load_align_column(
-    const char *name,
-    std::vector<T> &&data,
-    size_type interval,
-    bool start_from_beginning,
-    const T &null_value,
-    std::function<DataFrame::size_type(
-                        const DataFrame::IndexType &,
-                        const DataFrame::IndexType &)> diff_func)  {
-
-    const size_type idx_s = indices_.size();
-    const size_type data_s = data.size();
-
-    if (data_s > idx_s || data_s == 0)  {
-        char buffer [512];
-
-        sprintf (buffer, "DataFrame::load_align_column(): ERROR: "
-#ifdef _WIN32
-                         "data size of %zu is larger than index size of %zu",
-#else
-                         "data size of %lu is larger than index size of %lu",
-#endif // _WIN32
-                 data_s, idx_s);
-        throw InconsistentData (buffer);
-    }
-
-    std::vector<T>  new_col(idx_s, null_value);
-    size_type       idx_idx { 0 };
-
-    if (start_from_beginning)  {
-        new_col[0] = std::move(data[0]);
-        idx_idx = 1;
-    }
-
-    size_type   idx_ref_idx { 0 };
-    size_type   data_idx { idx_idx };
-
-    for ( ; data_idx < data_s && idx_idx < idx_s; ++idx_idx)  {
-        const size_type idx_diff =
-            diff_func(indices_[idx_ref_idx], indices_[idx_idx]);
-
-        if (idx_diff < interval)  continue;
-        new_col[idx_idx + (idx_diff > interval ? -1 : 0)] =
-            std::move(data[data_idx]);
-        idx_ref_idx = idx_idx + (idx_diff > interval ? -1 : 0);
-        data_idx += 1;
-    }
-
-    return (load_column<T>(name, std::move(new_col)));
 }
 
 // ----------------------------------------------------------------------------
@@ -547,7 +506,20 @@ append_column (const char *name,
                Index2D<const ITR &> range,
                nan_policy padding)  {
 
-    std::vector<T>  &vec = get_column<T>(name);
+    const auto  iter = column_tb_.find (name);
+
+    if (iter == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer, "DataFrame::append_column(): ERROR: "
+                         "Cannot find column '%s'",
+                 name);
+        throw ColNotFound (buffer);
+    }
+
+    DataVec         &hv = data_[iter->second];
+    std::vector<T>  &vec = hv.template get_vector<T>();
+
     size_type       s = std::distance(range.begin, range.end) + vec.size ();
     const size_type idx_s = indices_.size();
 
@@ -564,6 +536,7 @@ append_column (const char *name,
         throw InconsistentData (buffer);
     }
 
+    vec.reserve (idx_s);
     vec.insert (vec.end (), range.begin, range.end);
 
     size_type   ret_cnt = s;
@@ -571,7 +544,7 @@ append_column (const char *name,
     s = vec.size();
     if (padding == nan_policy::pad_with_nans && s < idx_s)  {
         for (size_type i = 0; i < idx_s - s; ++i)  {
-            vec.push_back (std::move(get_nan<T>()));
+            vec.push_back (std::move(_get_nan<T>()));
             ret_cnt += 1;
         }
     }
@@ -587,7 +560,20 @@ typename DataFrame<I, H>::size_type
 DataFrame<I, H>::
 append_column (const char *name, const T &val, nan_policy padding)  {
 
-    std::vector<T>  &vec = get_column<T>(name);
+    const auto  iter = column_tb_.find (name);
+
+    if (iter == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer, "DataFrame::append_column(): ERROR: "
+                         "Cannot find column '%s'",
+                 name);
+        throw ColNotFound (buffer);
+    }
+
+    DataVec         &hv = data_[iter->second];
+    std::vector<T>  &vec = hv.template get_vector<T>();
+
     size_type       s = 1;
     const size_type idx_s = indices_.size();
 
@@ -612,7 +598,7 @@ append_column (const char *name, const T &val, nan_policy padding)  {
     s = vec.size();
     if (padding == nan_policy::pad_with_nans && s < idx_s)  {
         for (size_type i = 0; i < idx_s - s; ++i)  {
-            vec.push_back (std::move(get_nan<T>()));
+            vec.push_back (std::move(_get_nan<T>()));
             ret_cnt += 1;
         }
     }
@@ -645,7 +631,7 @@ void DataFrame<I, H>::remove_data_by_idx (Index2D<IndexType> range)  {
 
         remove_functor_<Ts ...> functor (b_dist, e_dist);
 
-        for (auto &iter : column_list_)
+        for (auto &iter : column_tb_)
             data_[iter.second].change(functor);
     }
 
@@ -676,7 +662,7 @@ void DataFrame<I, H>::remove_data_by_loc (Index2D<long> range)  {
             static_cast<size_type>(range.begin),
             static_cast<size_type>(range.end));
 
-        for (auto &iter : column_list_)
+        for (auto &iter : column_tb_)
             data_[iter.second].change(functor);
 
         return;
@@ -700,7 +686,21 @@ void DataFrame<I, H>::remove_data_by_sel (const char *name, F &sel_functor)  {
     static_assert(std::is_base_of<HeteroVector, H>::value,
                   "Only a StdDataFrame can call remove_data_by_loc()");
 
-    const ColumnVecType<T>  &vec = get_column<T>(name);
+    const auto  citer = column_tb_.find (name);
+
+    if (citer == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::remove_data_by_sel(1): ERROR: "
+                 "Cannot find column '%s'",
+                 name);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv = data_[citer->second];
+    const std::vector<T>    &vec = hv.template get_vector<T>();
+    const size_type         idx_s = indices_.size();
     const size_type         col_s = vec.size();
     std::vector<size_type>  col_indices;
 
@@ -709,7 +709,7 @@ void DataFrame<I, H>::remove_data_by_sel (const char *name, F &sel_functor)  {
         if (sel_functor (indices_[i], vec[i]))
             col_indices.push_back(i);
 
-    for (auto col_citer : column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_remove_functor_<Ts ...> functor (col_indices);
 
         data_[col_citer.second].change(functor);
@@ -719,7 +719,7 @@ void DataFrame<I, H>::remove_data_by_sel (const char *name, F &sel_functor)  {
     size_type       del_count = 0;
 
     for (size_type i = 0; i < col_indices_s; ++i)
-        indices_.erase(indices_.begin() + (col_indices[i] - del_count++));
+        indices_.erase(indices_.begin() + col_indices[i] - del_count++);
 
     return;
 }
@@ -731,8 +731,34 @@ template<typename T1, typename T2, typename F, typename ... Ts>
 void DataFrame<I, H>::
 remove_data_by_sel (const char *name1, const char *name2, F &sel_functor)  {
 
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
+    const auto  citer1 = column_tb_.find (name1);
+
+    if (citer1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::remove_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+
+    const auto  citer2 = column_tb_.find (name2);
+
+    if (citer2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::remove_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv1 = data_[citer1->second];
+    const DataVec           &hv2 = data_[citer2->second];
+    const std::vector<T1>   &vec1 = hv1.template get_vector<T1>();
+    const std::vector<T2>   &vec2 = hv2.template get_vector<T2>();
     const size_type         col_s1 = vec1.size();
     const size_type         col_s2 = vec2.size();
     const size_type         col_s = std::max(col_s1, col_s2);
@@ -741,11 +767,11 @@ remove_data_by_sel (const char *name1, const char *name2, F &sel_functor)  {
     col_indices.reserve(indices_.size() / 2);
     for (size_type i = 0; i < col_s; ++i)
         if (sel_functor (indices_[i],
-                         i < col_s1 ? vec1[i] : get_nan<T1>(),
-                         i < col_s2 ? vec2[i] : get_nan<T2>()))
+                         i < col_s1 ? vec1[i] : _get_nan<T1>(),
+                         i < col_s2 ? vec2[i] : _get_nan<T2>()))
             col_indices.push_back(i);
 
-    for (auto col_citer : column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_remove_functor_<Ts ...> functor (col_indices);
 
         data_[col_citer.second].change(functor);
@@ -755,7 +781,7 @@ remove_data_by_sel (const char *name1, const char *name2, F &sel_functor)  {
     size_type       del_count = 0;
 
     for (size_type i = 0; i < col_indices_s; ++i)
-        indices_.erase(indices_.begin() + (col_indices[i] - del_count++));
+        indices_.erase(indices_.begin() + col_indices[i] - del_count++);
 
     return;
 }
@@ -770,9 +796,48 @@ remove_data_by_sel (const char *name1,
                     const char *name3,
                     F &sel_functor)  {
 
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
-    const ColumnVecType<T3> &vec3 = get_column<T3>(name3);
+    const auto  citer1 = column_tb_.find (name1);
+
+    if (citer1 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name1);
+        throw ColNotFound (buffer);
+    }
+
+    const auto  citer2 = column_tb_.find (name2);
+
+    if (citer2 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name2);
+        throw ColNotFound (buffer);
+    }
+
+    const auto  citer3 = column_tb_.find (name3);
+
+    if (citer3 == column_tb_.end())  {
+        char buffer [512];
+
+        sprintf (buffer,
+                 "DataFrame::get_data_by_sel(2): ERROR: "
+                 "Cannot find column '%s'",
+                 name3);
+        throw ColNotFound (buffer);
+    }
+
+    const DataVec           &hv1 = data_[citer1->second];
+    const DataVec           &hv2 = data_[citer2->second];
+    const DataVec           &hv3 = data_[citer3->second];
+    const std::vector<T1>   &vec1 = hv1.template get_vector<T1>();
+    const std::vector<T2>   &vec2 = hv2.template get_vector<T2>();
+    const std::vector<T3>   &vec3 = hv3.template get_vector<T3>();
     const size_type         col_s1 = vec1.size();
     const size_type         col_s2 = vec2.size();
     const size_type         col_s3 = vec3.size();
@@ -782,12 +847,12 @@ remove_data_by_sel (const char *name1,
     col_indices.reserve(indices_.size() / 2);
     for (size_type i = 0; i < col_s; ++i)
         if (sel_functor (indices_[i],
-                         i < col_s1 ? vec1[i] : get_nan<T1>(),
-                         i < col_s2 ? vec2[i] : get_nan<T2>(),
-                         i < col_s3 ? vec3[i] : get_nan<T3>()))
+                         i < col_s1 ? vec1[i] : _get_nan<T1>(),
+                         i < col_s2 ? vec2[i] : _get_nan<T2>(),
+                         i < col_s3 ? vec3[i] : _get_nan<T3>()))
             col_indices.push_back(i);
 
-    for (auto col_citer : column_list_)  {
+    for (auto col_citer : column_tb_)  {
         sel_remove_functor_<Ts ...> functor (col_indices);
 
         data_[col_citer.second].change(functor);
@@ -797,390 +862,8 @@ remove_data_by_sel (const char *name1,
     size_type       del_count = 0;
 
     for (size_type i = 0; i < col_indices_s; ++i)
-        indices_.erase(indices_.begin() + (col_indices[i] - del_count++));
+        indices_.erase(indices_.begin() + col_indices[i] - del_count++);
 
-    return;
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename MAP, typename ... Ts>
-StdDataFrame<I> DataFrame<I, H>::
-remove_dups_common_(const DataFrame &s_df,
-                    remove_dup_spec rds,
-                    const MAP &row_table,
-                    const IndexVecType &index)  {
-
-    using count_vec = std::vector<size_type>;
-
-    count_vec   rows_to_del;
-
-    rows_to_del.reserve(8);
-    for (const auto &citer : row_table)  {
-        if (citer.second.size() > 1)  {
-            if (rds == remove_dup_spec::keep_first)  {
-                for (size_type i = 1; i < citer.second.size(); ++i)
-                    rows_to_del.push_back(citer.second[i]);
-            }
-            else if (rds == remove_dup_spec::keep_last)  {
-                for (size_type i = 0; i < citer.second.size() - 1; ++i)
-                    rows_to_del.push_back(citer.second[i]);
-            }
-            else  {  // remove_dup_spec::keep_none
-                for (size_type i = 0; i < citer.second.size(); ++i)
-                    rows_to_del.push_back(citer.second[i]);
-            }
-        }
-    }
-
-    StdDataFrame<I> new_df;
-    IndexVecType    new_index (index.size() - rows_to_del.size());
-
-    _remove_copy_if_(index.begin(), index.end(), new_index.begin(),
-                     [&rows_to_del] (std::size_t n) -> bool  {
-                         return (std::find(rows_to_del.begin(),
-                                           rows_to_del.end(),
-                                           n) != rows_to_del.end());
-                     });
-    new_df.load_index(std::move(new_index));
-
-    for (auto citer : s_df.column_list_)  {
-        copy_remove_functor_<Ts ...>    functor (citer.first.c_str(),
-                                                 rows_to_del,
-                                                 new_df);
-
-        s_df.data_[citer.second].change(functor);
-    }
-    return (new_df);
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T, typename ... Ts>
-DataFrame<I, H> DataFrame<I, H>::
-remove_duplicates (const char *name,
-                   bool include_index,
-                   remove_dup_spec rds) const  {
-
-    using data_tuple = std::tuple<const T &, const IndexType &>;
-    using count_vec = std::vector<size_type>;
-    using data_map = std::unordered_map<data_tuple, count_vec>;
-
-    const ColumnVecType<T>  &vec = get_column<T>(name);
-    const auto              &index = get_index();
-    const size_type         col_s = std::min(vec.size(), index.size());
-    data_map                row_table;
-    count_vec               dummy_vec;
-    const IndexType         dummy_idx { };
-
-    for (size_type i = 0; i < col_s; ++i)  {
-        auto    insert_res =
-            row_table.emplace(
-                std::forward_as_tuple(vec[i],
-                                      include_index ? index[i] : dummy_idx),
-                dummy_vec);
-
-        if (insert_res.second)
-            insert_res.first->second.reserve(8);
-        insert_res.first->second.push_back(i);
-    }
-
-    return(remove_dups_common_<data_map, Ts ...>(*this, rds, row_table, index));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T1, typename T2, typename ... Ts>
-DataFrame<I, H> DataFrame<I, H>::
-remove_duplicates (const char *name1,
-                   const char *name2,
-                   bool include_index,
-                   remove_dup_spec rds) const  {
-
-    using data_tuple = std::tuple<const T1 &, const T2 &, const IndexType &>;
-    using count_vec = std::vector<size_type>;
-    using data_map = std::unordered_map<data_tuple, count_vec>;
-
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
-    const auto              &index = get_index();
-    const size_type         col_s =
-        std::min<size_type>({ vec1.size(), vec2.size(), index.size() });
-    data_map                row_table;
-    count_vec               dummy_vec;
-    const IndexType         dummy_idx { };
-
-    for (size_type i = 0; i < col_s; ++i)  {
-        auto    insert_res =
-            row_table.emplace(
-                std::forward_as_tuple(vec1[i], vec2[i],
-                                      include_index ? index[i] : dummy_idx),
-                dummy_vec);
-
-        if (insert_res.second)
-            insert_res.first->second.reserve(8);
-        insert_res.first->second.push_back(i);
-    }
-
-    return(remove_dups_common_<data_map, Ts ...>(*this, rds, row_table, index));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T1, typename T2, typename T3, typename ... Ts>
-DataFrame<I, H> DataFrame<I, H>::
-remove_duplicates (const char *name1,
-                   const char *name2,
-                   const char *name3,
-                   bool include_index,
-                   remove_dup_spec rds) const  {
-
-    using data_tuple = std::tuple<const T1 &, const T2 &, const T3 &,
-                                  const IndexType &>;
-    using count_vec = std::vector<size_type>;
-    using data_map = std::unordered_map<data_tuple, count_vec>;
-
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
-    const ColumnVecType<T3> &vec3 = get_column<T3>(name3);
-    const auto              &index = get_index();
-    const size_type         col_s =
-        std::min<size_type>(
-            { vec1.size(), vec2.size(), vec3.size(), index.size() });
-    data_map                row_table;
-    count_vec               dummy_vec;
-    const IndexType         dummy_idx { };
-
-    for (size_type i = 0; i < col_s; ++i)  {
-        auto    insert_res =
-            row_table.emplace(
-                std::forward_as_tuple(vec1[i], vec2[i], vec3[i],
-                                      include_index ? index[i] : dummy_idx),
-                dummy_vec);
-
-        if (insert_res.second)
-            insert_res.first->second.reserve(8);
-        insert_res.first->second.push_back(i);
-    }
-
-    return(remove_dups_common_<data_map, Ts ...>(*this, rds, row_table, index));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T1, typename T2, typename T3, typename T4, typename ... Ts>
-DataFrame<I, H> DataFrame<I, H>::
-remove_duplicates (const char *name1,
-                   const char *name2,
-                   const char *name3,
-                   const char *name4,
-                   bool include_index,
-                   remove_dup_spec rds) const  {
-
-    using data_tuple = std::tuple<const T1 &, const T2 &,
-                                  const T3 &, const T4 &,
-                                  const IndexType &>;
-    using count_vec = std::vector<size_type>;
-    using data_map = std::unordered_map<data_tuple, count_vec>;
-
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
-    const ColumnVecType<T3> &vec3 = get_column<T3>(name3);
-    const ColumnVecType<T4> &vec4 = get_column<T4>(name4);
-    const auto              &index = get_index();
-    const size_type         col_s =
-        std::min<size_type>(
-            { vec1.size(), vec2.size(), vec3.size(), vec4.size(),
-              index.size() });
-    data_map                row_table;
-    count_vec               dummy_vec;
-    const IndexType         dummy_idx { };
-
-    for (size_type i = 0; i < col_s; ++i)  {
-        auto    insert_res =
-            row_table.emplace(
-                std::forward_as_tuple(vec1[i], vec2[i], vec3[i], vec4[i],
-                                      include_index ? index[i] : dummy_idx),
-                dummy_vec);
-
-        if (insert_res.second)
-            insert_res.first->second.reserve(8);
-        insert_res.first->second.push_back(i);
-    }
-
-    return(remove_dups_common_<data_map, Ts ...>(*this, rds, row_table, index));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T1, typename T2, typename T3, typename T4, typename T5,
-         typename ... Ts>
-DataFrame<I, H> DataFrame<I, H>::
-remove_duplicates (const char *name1,
-                   const char *name2,
-                   const char *name3,
-                   const char *name4,
-                   const char *name5,
-                   bool include_index,
-                   remove_dup_spec rds) const  {
-
-    using data_tuple = std::tuple<const T1 &, const T2 &,
-                                  const T3 &, const T4 &, const T5 &,
-                                  const IndexType &>;
-    using count_vec = std::vector<size_type>;
-    using data_map = std::unordered_map<data_tuple, count_vec>;
-
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
-    const ColumnVecType<T3> &vec3 = get_column<T3>(name3);
-    const ColumnVecType<T4> &vec4 = get_column<T4>(name4);
-    const ColumnVecType<T5> &vec5 = get_column<T5>(name5);
-    const auto              &index = get_index();
-    const size_type         col_s =
-        std::min<size_type>(
-            { vec1.size(), vec2.size(), vec3.size(), vec4.size(), vec5.size(),
-              index.size() });
-    data_map                row_table;
-    count_vec               dummy_vec;
-    const IndexType         dummy_idx { };
-
-    for (size_type i = 0; i < col_s; ++i)  {
-        auto    insert_res =
-            row_table.emplace(
-                std::forward_as_tuple(vec1[i], vec2[i], vec3[i],
-                                      vec4[i], vec5[i],
-                                      include_index ? index[i] : dummy_idx),
-                dummy_vec);
-
-        if (insert_res.second)
-            insert_res.first->second.reserve(8);
-        insert_res.first->second.push_back(i);
-    }
-
-    return(remove_dups_common_<data_map, Ts ...>(*this, rds, row_table, index));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename T1, typename T2, typename T3, typename T4,
-         typename T5, typename T6,
-         typename ... Ts>
-DataFrame<I, H> DataFrame<I, H>::
-remove_duplicates (const char *name1,
-                   const char *name2,
-                   const char *name3,
-                   const char *name4,
-                   const char *name5,
-                   const char *name6,
-                   bool include_index,
-                   remove_dup_spec rds) const  {
-
-    using data_tuple = std::tuple<const T1 &, const T2 &,
-                                  const T3 &, const T4 &,
-                                  const T5 &, const T6 &,
-                                  const IndexType &>;
-    using count_vec = std::vector<size_type>;
-    using data_map = std::unordered_map<data_tuple, count_vec>;
-
-    const ColumnVecType<T1> &vec1 = get_column<T1>(name1);
-    const ColumnVecType<T2> &vec2 = get_column<T2>(name2);
-    const ColumnVecType<T3> &vec3 = get_column<T3>(name3);
-    const ColumnVecType<T4> &vec4 = get_column<T4>(name4);
-    const ColumnVecType<T5> &vec5 = get_column<T5>(name5);
-    const ColumnVecType<T6> &vec6 = get_column<T6>(name6);
-    const auto              &index = get_index();
-    const size_type         col_s =
-        std::min<size_type>(
-            { vec1.size(), vec2.size(), vec3.size(), vec4.size(),
-              vec5.size(), vec6.size(),
-              index.size() });
-    data_map                row_table;
-    count_vec               dummy_vec;
-    const IndexType         dummy_idx { };
-
-    for (size_type i = 0; i < col_s; ++i)  {
-        auto    insert_res =
-            row_table.emplace(
-                std::forward_as_tuple(vec1[i], vec2[i], vec3[i],
-                                      vec4[i], vec5[i], vec6[i],
-                                      include_index ? index[i] : dummy_idx),
-                dummy_vec);
-
-        if (insert_res.second)
-            insert_res.first->second.reserve(8);
-        insert_res.first->second.push_back(i);
-    }
-
-    return(remove_dups_common_<data_map, Ts ...>(*this, rds, row_table, index));
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename OLD_T1, typename OLD_T2, typename NEW_T, typename F>
-void DataFrame<I, H>::
-consolidate(const char *old_col_name1,
-            const char *old_col_name2,
-            const char *new_col_name,
-            F &functor,
-            bool delete_old_cols)  {
-
-    static_assert(std::is_base_of<HeteroVector, H>::value,
-                  "Only a StdDataFrame can call consolidate()");
-
-    const ColumnVecType<OLD_T1> &vec1 = get_column<OLD_T1>(old_col_name1);
-    const ColumnVecType<OLD_T2> &vec2 = get_column<OLD_T2>(old_col_name2);
-
-    load_column<NEW_T>(new_col_name,
-                       std::move(functor(indices_.begin(), indices_.end(),
-                                         vec1.begin(), vec1.end(),
-                                         vec2.begin(), vec2.end())),
-                       nan_policy::dont_pad_with_nans);
-    if (delete_old_cols)  {
-        remove_column(old_col_name1);
-        remove_column(old_col_name2);
-    }
-    return;
-}
-
-// ----------------------------------------------------------------------------
-
-template<typename I, typename  H>
-template<typename OLD_T1, typename OLD_T2, typename OLD_T3,
-         typename NEW_T, typename F>
-void DataFrame<I, H>::
-consolidate(const char *old_col_name1,
-            const char *old_col_name2,
-            const char *old_col_name3,
-            const char *new_col_name,
-            F &functor,
-            bool delete_old_cols)  {
-
-    static_assert(std::is_base_of<HeteroVector, H>::value,
-                  "Only a StdDataFrame can call consolidate()");
-
-    const ColumnVecType<OLD_T1> &vec1 = get_column<OLD_T1>(old_col_name1);
-    const ColumnVecType<OLD_T2> &vec2 = get_column<OLD_T2>(old_col_name2);
-    const ColumnVecType<OLD_T3> &vec3 = get_column<OLD_T3>(old_col_name3);
-
-    load_column<NEW_T>(new_col_name,
-                       std::move(functor(indices_.begin(), indices_.end(),
-                                         vec1.begin(), vec1.end(),
-                                         vec2.begin(), vec2.end(),
-                                         vec3.begin(), vec3.end())),
-                       nan_policy::dont_pad_with_nans);
-    if (delete_old_cols)  {
-        remove_column(old_col_name1);
-        remove_column(old_col_name2);
-        remove_column(old_col_name3);
-    }
     return;
 }
 

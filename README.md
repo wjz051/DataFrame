@@ -1,83 +1,84 @@
-<!--
-Copyright (c) 2019-2022, Hossein Moein
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-* Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-* Neither the name of Hossein Moein and/or the DataFrame nor the
-names of its contributors may be used to endorse or promote products
-derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL Hossein Moein BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
--->
 [![Build status](https://ci.appveyor.com/api/projects/status/hjw01qui3bvxs8yi?svg=true)](https://ci.appveyor.com/project/hosseinmoein/dataframe)
-[![Build Status](https://travis-ci.org/hosseinmoein/DataFrame.svg?branch=master)](https://travis-ci.org/hosseinmoein/DataFrame)<BR>
+[![Build Status](https://travis-ci.org/hosseinmoein/DataFrame.svg?branch=master)](https://travis-ci.org/hosseinmoein/DataFrame)
 ![GitHub](https://img.shields.io/github/license/hosseinmoein/DataFrame.svg?color=red&style=popout)
-![GitHub tag (latest by date)](https://img.shields.io/github/tag-date/hosseinmoein/DataFrame.svg?color=blue&label=Official%20Release&style=popout)<BR>
+![GitHub tag (latest by date)](https://img.shields.io/github/tag-date/hosseinmoein/DataFrame.svg?color=blue&label=Official%20Release&style=popout)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/std/the-standard )
-[![Codacy Badge](https://api.codacy.com/project/badge/Grade/db646376a4014c3788c7224e670fe451)](https://app.codacy.com/manual/hosseinmoein/DataFrame?utm_source=github.com&utm_medium=referral&utm_content=hosseinmoein/DataFrame&utm_campaign=Badge_Grade_Dashboard)
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/hosseinmoein/DataFrame/master)
-<!--
-[![HitCount](http://hits.dwyl.io/hosseinmoein/DataFrame.svg)](http://hits.dwyl.io/hosseinmoein/DataFrame)
--->
 
 <img src="docs/pandalion.png" alt="drawing" width="500"/>
 
 # DataFrame
 This is a C++ statistical library that provides an interface similar to Pandas package in Python.<BR>
 <B>A DataFrame can have one index column and many data columns of any built-in or user-defined type</B>.<BR>
-You could slice the data in many different ways. You could join, merge, group-by the data. You could run various statistical, summarization and ML algorithms on the data. You could add your custom algorithms easily. You could multi-column sort, custom pick and delete the data. And more …<BR>
-DataFrame also includes a large collection of analytical routines in form of visitors -- see [documentation](https://htmlpreview.github.io/?https://github.com/hosseinmoein/DataFrame/blob/master/docs/HTML/DataFrame.html) below. These are from basic stats such as <I>Mean, Std Deviation, Return, …</I> to more involved analysis such as <I>Affinity Propagation, Polynomial Fit, Hurst Exponent, …</I> -- See [documentation](https://htmlpreview.github.io/?https://github.com/hosseinmoein/DataFrame/blob/master/docs/HTML/DataFrame.html) for a complete list with code samples, and how you can add your custom algorithms.<BR>
-
-<B>I have followed a few principles in this library:</B><BR>
-
-1.  Support any type either built-in or user defined without needing new code
-2.  Never chase pointers ala `linked lists`, `std::any`, `pointer to base`, ..., including `virtual function calls`
-3.  Have all column data in continuous memory space. Also, be mindful of cache-line aliasing misses between multiple columns
-4.  Never use more space than you need ala `unions`, `std::variant`, ...
-5.  Avoid copying data as much as possible
-6.  Use multi-threading but only when it makes sense
-7.  Do not attempt to protect the user against `garbage in, garbage out`
-
+You could do almost everything you could do with Pandas within the C++ syntax and type checking framework. You can add/delete any data column type, slice, run summarization functors, transpose, etc. like Pandas.<BR><BR>
 <B>Views</B><BR>
-You can slice the data frame and instead of getting another data frame you can opt to get a view. A view is a data frame that is a reference to a slice of the original data frame. So if you change the data in the view the corresponding data in the original data frame will also be changed (and vice versa).<BR>
-
+You can slice the data frame and instead of getting another data frame you can opt to get a view. A view is a data frame that is a reference to a slice of the original data frame. So if you change the data in the view the corresponding data in the original data frame will also be changed.<BR><BR>
 <B>Multithreading</B><BR>
-1.  DataFrame uses static containers to achieve type heterogeneity. By default, these static containers are unprotected. This is done by design. So by default, there is no locking overhead. If you use DataFrame in a multithreaded program you must provide a _SpinLock_ defined in <a href="include/DataFrame/Utils/ThreadGranularity.h">ThreadGranularity.h</a> file. DataFrame will use your _SpinLock_ to protect the containers.<BR>Please see <a href="https://htmlpreview.github.io/?https://github.com/hosseinmoein/DataFrame/blob/master/docs/HTML/DataFrame.html">documentation</a>, <a href="https://htmlpreview.github.io/?https://github.com/hosseinmoein/DataFrame/blob/master/docs/HTML/remove_lock.html">set_lock()</a>, <a href="https://htmlpreview.github.io/?https://github.com/hosseinmoein/DataFrame/blob/master/docs/HTML/remove_lock.html">remove_lock()</a>, and <a href="test/dataframe_tester.cc#L3835">dataframe_tester.cc</a> for code example.
-2.  In addition, instances of DataFrame are not multithreaded safe either. In other words, a single instance of DataFrame must not be used in multiple threads without protection, unless it is used as read-only.
-3.  In the meantime, DataFrame utilizes multithreading in two different ways internally:
-    1.  <B>Async Interface:</B> There are asynchronous versions of some methods. For example, you have _sort()_/_sort_async()_, _visit()_/_visit_async()_, ... more. The latter versions return a _std::future_ that could execute in parallel.
-    2.  DataFrame uses multiple threads, internally and unbeknown to the user, in some of its algorithms when appropriate. User can control (or turn off) the multithreading by calling _set_thread_level()_ which sets the max number of threads to be used. The default is 0. The optimal number of threads is a function of users hardware/software environment and usually obtained by trail and error. _set_thread_level()_ and threading level in general is a static property and once set, it applies to all instances.
+Instances of DataFrame are not multithreaded safe. In other words, a single instance of DataFrame must not be used in multiple threads without protection. But DataFrame utilizes multithreading in two different ways:<BR>
+1. There are asynchronous versions of some methods. For example, you have both sort() and sort_async(). The latter returns a std::future which could execute in parallel.
+2. DataFrame uses multiple threads, internally and unbeknown to the user, in some of its algorithms when appropriate. User can control (or turn off) the multithreading by calling set_thread_level() which sets the max number of threads to be used. The default is 0. The optimal number of threads is a function of users hardware/software environment and usually obtained by trail and error. set_thread_level() and threading level in general is a static property and once set, it applies to all instances.
 
-<B><a href="docs/DateTimeDoc.pdf">DateTime</a></B><BR>
-DateTime class included in this library is a very cool and handy object to manipulate date/time with nanosecond precision.<BR>
+<B>Date Time</B><BR>
+DateTime class included in this library is a very cool and handy object to manipulate date/time with nanosecond precision.
 
 ---
 
-## [*DataFrame Documentation / Code Samples*](https://htmlpreview.github.io/?https://github.com/hosseinmoein/DataFrame/blob/master/docs/HTML/DataFrame.html)
+<B>Example Code</B>
+```CPP
+using namespace hmdf;
+
+// Define a DataFrame with unsigned long index type
+typedef StdDataFrame<unsigned long> MyDataFrame;
+
+MyDataFrame                df;
+std::vector<int>           intvec = { 1, 2, 3, 4, 5 };
+std::vector<double>        dblvec = { 1.2345, 2.2345, 3.2345, 4.2345, 5.2345 };
+std::vector<double>        dblvec2 = { 0.998, 0.3456, 0.056, 0.15678, 0.00345,
+                                       0.923, 0.06743, 0.1 };
+std::vector<std::string>   strvec = { "Insight", "John Dow", "Alakazam",
+                                      "Persian Prince", "Bugs Bunny" };
+std::vector<unsigned long> ulgvec = { 1UL, 2UL, 3UL, 4UL, 5UL, 8UL, 7UL, 6UL }
+std::vector<unsigned long> xulgvec = ulgvec;
+
+// This is only one way of loading data into a DataFrame instance. There are
+// many different ways of doing it. Please see the documentation,
+// or dataframe_tester.cc
+int rc = df.load_data(std::move(ulgvec),  // Index column
+                      std::make_pair("int_col", intvec),
+                      std::make_pair("dbl_col", dblvec),
+                      std::make_pair("dbl_col_2", dblvec2),
+                      std::make_pair("str_col", strvec),
+                      std::make_pair("ul_col", xulgvec));
+
+// This is another way of loading a DataFrame
+MyDataFrame       df2;
+std::future<bool> fut = df2.read_async("sample_data.csv", io_format::csv);
+
+fut.get();
+        
+// Sort the Frame by index
+df.sort<MyDataFrame::TimeStamp, int, double, std::string>();
+// Sort the Frame by column “dbl_col_2”
+df.sort<double, int, double, std::string>("dbl_col_2");
+
+// A functor to calculate mean, variance, skew, kurtosis, defined in
+// DataFrameVisitors.h file.
+// You can implement your own algorithms and extend the DataFrame easily 
+StatsVisitor<double>  stats_visitor;
+// Calculate the stats on column “dbl_col”
+df.visit<double>("dbl_col", stats_visitor);
+``` 
+
+---
+
+## [DataFrame Documentation](docs/DataFrameDoc.pdf)
 [DateTime Documentation](docs/DateTimeDoc.pdf)
 
 ---
 
-[DataFrame Test File](test/dataframe_tester.cc)<BR>
-[DataFrame Test File 2](test/dataframe_tester_2.cc)<BR>
+## [DataFrame Test File](test/dataframe_tester.cc)
 [Heterogeneous Vectors Test File](test/vectors_tester.cc)<BR>
 [Date/Time Test File](test/date_time_tester.cc)
-
+  
 ---
 
 [Contributions](docs/CONTRIBUTING.md)<BR>
@@ -100,50 +101,36 @@ make install
 cd [Debug | Release]
 make uninstall
 ```
-
-### Package managers
-If you are using Conan to manage your dependencies, add `dataframe/x.y.z@` to your requires, where x.y.z is the release version you want to use. Conan will acquire DataFrame, build it from source in your computer, and provide CMake integration support for your projects. See the [conan docs](https://docs.conan.io/en/latest/) for more information.<BR> Sample `conanfile.txt`:
-
-```text
-[requires]
-dataframe/1.15.0@
-
-[generators]
-cmake
-```
 ---
 
 ### Performance
-There is a test program [_dataframe_performance_](test/dataframe_performance.cc) that should give you some sense of how this library performs. As a comparison, there is also a Pandas Python [_pandas_performance_](test/pandas_performance.py) script that does exactly the same thing.<BR>
-_dataframe_performance.cc_ uses DataFrame async interface and is compiled with gcc compiler with -O3 flag.<BR>
-_pandas_performance.py_ is ran with Pandas 1.1.0 and Python 3.7.<BR>
-I ran both on my mac-book, doing the following:<BR>
+There is a test program [dataframe_performance](test/dataframe_performance.cc) that should give you some sense of how this library performs. As a comparison, there is also a Pandas Python [pandas_performance](test/pandas_performance.py) script that does exactly the same thing.<BR>
+dataframe_performance.cc is compiled with gcc compiler with -O3 flag.<BR>
+pandas_performance.py is ran with Python 3.7.<BR>
+I ran both on my mac-book, doing the following:<BR> 
 <img src="docs/MacSize.png" alt="drawing" width="500"/>
 
-1.  Generate ~1.6 billion second resolution timestamps and load it into the DataFrame/Pandas as index.<BR>
-2.  Generate ~1.6 billion random numbers each for 3 columns with normal, log normal, and exponential distributions and load them into the DataFrame/Pandas.<BR>
-3.  Calculate the mean of each of the 3 columns.<BR>
+1. Generate ~1.6 billion second resolution timestamps and load it into the DataFrame/Pandas as index.
+2. Generate ~1.6 billion random numbers each for 3 columns with normal, log normal, and exponential distributions and load them into the DataFrame/Pandas.
+3. Calculate the mean of each of the 3 columns.
 
 Result:
 ```bash
-MacBook> time python test/pandas_performance.py
+Prompt> time python pandas_performance.py
 All memory allocations are done. Calculating means ...
 
 real  17m18.916s
 user  4m47.113s
 sys   5m31.901s
-
-
-MacBook> time bin/Linux.GCC64/dataframe_performance
+Prompt>
+Prompt>
+Prompt> time ../bin/Linux.GCC64/dataframe_performance
 All memory allocations are done. Calculating means ...
 
-real  5m25.641s
-user  2m37.362s
-sys   2m3.451s
+real  6m40.222s
+user  2m54.362s
+sys   2m14.951s
 ```
-<B>The interesting part:</B><BR>
-1.  Pandas script, I believe, is entirely implemented in Numpy which is in C.
-2.  In case of Pandas, allocating memory + random number generation takes almost the same amount of time as calculating means.
-3.  In case of DataFrame 90% of the time is spent in allocating memory + random number generation.
-4.  You load data once, but calculate statistics many times. So DataFrame, in general, is about 17x faster than parts of Pandas that are implemented in Numpy. I leave parts of Pandas that are purely in Python to imagination.
-5.  Pandas process image at its peak is ~105GB. C++ DataFrame process image at its peak is ~68GB.
+The interesting part:<BR>
+In case of Pandas allocating memory and calculating means take almost the same time.<BR>
+In case of DataFrame 85% of the time is spent in allocating memory.
